@@ -13,6 +13,8 @@ dependencies = [
     "PyPDF2",
     "python-docx",
     "faiss-cpu",
+    "openai",
+    "httpx",
 ]
 
 [build-system]

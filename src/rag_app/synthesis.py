@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import Any, List, Optional, Sequence, Tuple
 
+from dotenv import load_dotenv
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .rag_config import GENERATION_MODEL_NAME, GENERATION_TEMPERATURE, MAX_NEW_TOKENS
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +32,9 @@ def get_synthesizer() -> "AnswerSynthesizer":
 def load_synthesizer_eager() -> "AnswerSynthesizer":
     """Force-load the LLM weights now (call once at startup)."""
     synth = get_synthesizer()
+    if synth.use_api:
+        logger.info("Using Gemini API for synthesis.")
+        return synth
     logger.info("Loading generation model: %s", GENERATION_MODEL_NAME)
     synth.load()
     logger.info("Generation model loaded.")
@@ -72,8 +79,21 @@ class AnswerSynthesizer:
     def __init__(self) -> None:
         self.tokenizer: Optional[AutoTokenizer] = None
         self.model: Optional[AutoModelForCausalLM] = None
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY")
+        self.gemini_base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.use_api = bool(self.gemini_api_key)
+        self.client = None
+        if self.use_api:
+            from openai import OpenAI
+            self.client = OpenAI(
+                api_key=self.gemini_api_key,
+                base_url=self.gemini_base_url,
+            )
 
     def load(self) -> None:
+        if self.use_api:
+            return
         if self.model is not None and self.tokenizer is not None:
             return
         self.tokenizer = AutoTokenizer.from_pretrained(GENERATION_MODEL_NAME, trust_remote_code=True)
@@ -129,10 +149,20 @@ class AnswerSynthesizer:
             f"## Câu hỏi\n{query}\n\n"
             "## Trả lời"
         )
-        messages = [
+        return [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ]
+
+    def _build_answer_prompt(
+        self,
+        query: str,
+        chunks: Sequence[Tuple[str, str]],
+        brief: bool,
+        extra_context: str,
+        history: Optional[Sequence[dict]],
+    ) -> str:
+        messages = self._build_api_messages(query, chunks, brief, extra_context, history)
         return self.tokenizer.apply_chat_template(
             messages,
             tokenize=False,
@@ -147,6 +177,22 @@ class AnswerSynthesizer:
         extra_context: str = "",
         history: Optional[Sequence[dict]] = None,
     ) -> str:
+        if self.use_api:
+            messages = self._build_api_messages(query, chunks, brief, extra_context, history)
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.gemini_model,
+                    messages=messages,
+                    max_tokens=MAX_NEW_TOKENS if not brief else 180,
+                    temperature=GENERATION_TEMPERATURE,
+                )
+                answer = response.choices[0].message.content.strip()
+                return self._clean_answer(answer)
+            except Exception as e:
+                logger.error(f"Error calling Gemini API in synthesize: {e}")
+                if not (self.model and self.tokenizer):
+                    raise e
+
         self.load()
         assert self.tokenizer is not None and self.model is not None
 
@@ -178,6 +224,26 @@ class AnswerSynthesizer:
         history: Optional[Sequence[dict]] = None,
     ):
         """Yield answer text incrementally as the model generates it."""
+        if self.use_api:
+            messages = self._build_api_messages(query, chunks, brief, extra_context, history)
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.gemini_model,
+                    messages=messages,
+                    max_tokens=MAX_NEW_TOKENS if not brief else 180,
+                    temperature=GENERATION_TEMPERATURE,
+                    stream=True,
+                )
+                for chunk in response:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield content
+                return
+            except Exception as e:
+                logger.error(f"Error calling Gemini API stream in synthesize_stream: {e}")
+                if not (self.model and self.tokenizer):
+                    raise e
+
         from threading import Thread
 
         from transformers import TextIteratorStreamer
@@ -225,32 +291,27 @@ class AnswerSynthesizer:
             "Nêu các ý chính, khái niệm quan trọng và kết luận nếu có.\n\n"
             f"{context}"
         )
-        messages = [
-            {"role": "system", "content": "Bạn là trợ lý tóm tắt tài liệu. Viết tiếng Việt, súc tích, có cấu trúc."},
-            {"role": "user", "content": user_prompt},
-        ]
-        self.load()
-        assert self.tokenizer is not None and self.model is not None
-
-        prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=3072)
-        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=280,
-                temperature=GENERATION_TEMPERATURE,
-                do_sample=GENERATION_TEMPERATURE > 0,
-                top_p=0.9,
-                repetition_penalty=1.1,
-                pad_token_id=self.tokenizer.eos_token_id,
-            )
-
-        generated = outputs[0][inputs["input_ids"].shape[1]:]
-        return self.tokenizer.decode(generated, skip_special_tokens=True).strip()
+        system = "Bạn là trợ lý tóm tắt tài liệu. Viết tiếng Việt, súc tích, có cấu trúc."
+        return self._generate(system, user_prompt, max_new_tokens=280)
 
     def _generate(self, system: str, user: str, max_new_tokens: int = 320) -> str:
+        if self.use_api:
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.gemini_model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    max_tokens=max_new_tokens,
+                    temperature=GENERATION_TEMPERATURE,
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                logger.error(f"Error calling Gemini API in _generate: {e}")
+                if not (self.model and self.tokenizer):
+                    raise e
+
         self.load()
         assert self.tokenizer is not None and self.model is not None
         messages = [

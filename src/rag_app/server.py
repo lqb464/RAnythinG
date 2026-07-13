@@ -445,6 +445,154 @@ async def delete_studio_output(notebook_id: str, output_id: str):
     return {"ok": True}
 
 
+# --- External API for integration (e.g. with AgenThink) ---
+
+class ExternalRetrieveRequest(BaseModel):
+    project_id: str
+    query: str
+    top_k: Optional[int] = 4
+
+
+class ExternalQueryRequest(BaseModel):
+    project_id: str
+    query: str
+    top_k: Optional[int] = 4
+    brief: Optional[bool] = False
+    history: Optional[List[dict]] = None
+
+
+@app.post("/api/external/upload")
+async def external_upload(project_id: str, files: List[UploadFile] = File(...)):
+    project_id = project_id.strip()
+    if not project_id:
+        raise HTTPException(400, "project_id không được trống")
+    
+    # Auto-create project if it doesn't exist
+    if not store.get_notebook(project_id):
+        store.create_notebook(f"Project {project_id}", notebook_id=project_id)
+        
+    added: List[str] = []
+    existing = set(store.list_source_files(project_id))
+    agent = await agent_cache.async_get_agent(project_id)
+    has_existing_index = len(agent.chunks) > 0
+
+    for f in files:
+        if f.filename in existing:
+            continue
+        data = await f.read()
+        filename = store.save_upload_bytes(project_id, f.filename, data)
+        if not filename:
+            continue
+        added.append(filename)
+        if has_existing_index:
+            parsed = parse_upload_bytes(filename, data)
+            if parsed.text.strip():
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None, agent_cache.add_document, project_id, filename, parsed.text
+                )
+
+    if added and not has_existing_index:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, agent_cache.rebuild_agent, project_id)
+
+    agent = await agent_cache.async_get_agent(project_id)
+    return {
+        "ok": True,
+        "added": added,
+        "sources": store.list_source_files(project_id),
+        "stats": agent.get_stats() if len(agent.chunks) > 0 else {"documents": 0, "chunks": 0},
+    }
+
+
+@app.post("/api/external/retrieve")
+async def external_retrieve(body: ExternalRetrieveRequest):
+    project_id = body.project_id.strip()
+    if not project_id:
+        raise HTTPException(400, "project_id không được trống")
+    if not store.get_notebook(project_id):
+        raise HTTPException(404, "Project không tồn tại")
+        
+    agent = await agent_cache.async_get_agent(project_id)
+    if len(agent.chunks) == 0:
+        return {"chunks": []}
+        
+    query = body.query.strip()
+    if not query:
+        raise HTTPException(400, "query không được trống")
+        
+    top_k = body.top_k or 4
+    chunks = agent.retrieve(query, top_k=top_k)
+    return {
+        "chunks": [
+            {
+                "source": c.source,
+                "text": c.text,
+            }
+            for c in chunks
+        ]
+    }
+
+
+@app.post("/api/external/query")
+async def external_query(body: ExternalQueryRequest):
+    project_id = body.project_id.strip()
+    if not project_id:
+        raise HTTPException(400, "project_id không được trống")
+    if not store.get_notebook(project_id):
+        raise HTTPException(404, "Project không tồn tại")
+        
+    agent = await agent_cache.async_get_agent(project_id)
+    if len(agent.chunks) == 0:
+        raise HTTPException(400, "Chưa có tài liệu nào trong project này")
+        
+    query = body.query.strip()
+    if not query:
+        raise HTTPException(400, "query không được trống")
+        
+    top_k = body.top_k or 4
+    brief = body.brief or False
+    history = body.history or []
+    
+    answer, chunks = agent.answer(query, top_k=top_k, brief=brief, history=history)
+    return {
+        "answer": answer,
+        "answer_html": _format_answer_html(answer),
+        "chunks": [
+            {
+                "source": c.source,
+                "text": c.text,
+            }
+            for c in chunks
+        ]
+    }
+
+
+@app.delete("/api/external/projects/{project_id}")
+async def external_delete_project(project_id: str):
+    project_id = project_id.strip()
+    if not store.get_notebook(project_id):
+        raise HTTPException(404, "Project không tồn tại")
+    agent_cache.invalidate_agent(project_id)
+    store.delete_notebook(project_id)
+    return {"ok": True}
+
+
+@app.delete("/api/external/projects/{project_id}/sources/{filename:path}")
+async def external_delete_source(project_id: str, filename: str):
+    project_id = project_id.strip()
+    if not store.get_notebook(project_id):
+        raise HTTPException(404, "Project không tồn tại")
+    
+    existing = store.list_source_files(project_id)
+    if filename not in existing:
+        raise HTTPException(404, "Tập tin không tồn tại trong project")
+        
+    store.remove_source(project_id, filename)
+    agent_cache.remove_document(project_id, filename)
+    return {"ok": True, "sources": store.list_source_files(project_id)}
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -453,5 +601,5 @@ def run(host: str | None = None, port: int | None = None) -> None:
     import uvicorn
 
     host = host or os.getenv("HOST", "127.0.0.1")
-    port = int(port or os.getenv("PORT", "8000"))
+    port = int(port or os.getenv("PORT", "8001"))
     uvicorn.run("src.rag_app.server:app", host=host, port=port, reload=False)

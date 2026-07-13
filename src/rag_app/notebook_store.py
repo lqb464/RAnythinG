@@ -64,8 +64,8 @@ def list_notebooks() -> List[dict]:
     return notebooks
 
 
-def create_notebook(name: str = "Notebook mới") -> dict:
-    notebook_id = str(uuid.uuid4())[:8]
+def create_notebook(name: str = "Notebook mới", notebook_id: Optional[str] = None) -> dict:
+    notebook_id = notebook_id or str(uuid.uuid4())[:8]
     folder = NOTEBOOKS_ROOT / notebook_id
     folder.mkdir(parents=True, exist_ok=True)
     _sources_dir(notebook_id).mkdir(exist_ok=True)

@@ -18,3 +18,5 @@ beautifulsoup4
 torchvision
 docling
 networkx
+openai
+httpx
