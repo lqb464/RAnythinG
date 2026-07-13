@@ -1,0 +1,42 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: rananything-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rananything
+      POSTGRES_PASSWORD: rananything
+      POSTGRES_DB: rananything
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rananything -d rananything"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: rananything-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://rananything:rananything@db:5432/rananything
+      DATA_DIR: /data
+      HOST: 0.0.0.0
+      PORT: 8000
+      # Cache model Hugging Face trong volume
+      HF_HOME: /data/huggingface
+      TRANSFORMERS_CACHE: /data/huggingface
+    volumes:
+      - app_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  app_data:

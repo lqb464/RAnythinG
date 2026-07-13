@@ -1,0 +1,11 @@
+.venv
+__pycache__
+*.pyc
+.git
+data
+*.faiss
+.pytest_cache
+terminals
+.env
+.env.*
+!.env.example

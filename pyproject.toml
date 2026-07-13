@@ -1,0 +1,23 @@
+[project]
+name = "rag_notebooklm"
+version = "0.1.0"
+description = "Local NotebookLM-style RAG app with document upload, hybrid FAISS+BM25 retrieval, GraphRAG, and a FastAPI + HTML/CSS/JS UI."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sentence-transformers",
+    "transformers",
+    "torch",
+    "PyPDF2",
+    "python-docx",
+    "faiss-cpu",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
