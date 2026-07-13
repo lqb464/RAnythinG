@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}RAnythinG — RAG local cho tài liệu của bạn{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <div class="hero-bg" aria-hidden="true">
+    <span class="orb orb-a"></span>
+    <span class="orb orb-b"></span>
+    <span class="hero-grid"></span>
+  </div>
+  <div class="hero-inner">
+    <p class="eyebrow">RAG · Local · Privacy-first</p>
+    <h1>
+      Hỏi đáp tài liệu của bạn<br />
+      <span class="gradient-text">không cần đưa lên cloud</span>
+    </h1>
+    <p class="hero-lead">
+      Upload PDF, Word, slide — tự lập chỉ mục vector, chat có trích dẫn nguồn,
+      và biến nội dung thành quiz, báo cáo, mind map. Tất cả chạy trên máy bạn.
+    </p>
+    <div class="hero-cta">
+      <a href="/app" class="btn-primary btn-lg">Mở ứng dụng</a>
+      <a href="/guide" class="btn-ghost btn-lg">Hướng dẫn cài đặt</a>
+    </div>
+    <div class="trust-row">
+      <span class="trust-pill">🔒 Dữ liệu ở local</span>
+      <span class="trust-pill">📎 Trích dẫn nguồn</span>
+      <span class="trust-pill">🐳 Docker ready</span>
+      <span class="trust-pill">📄 PDF · DOCX · MD</span>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-head">
+    <p class="eyebrow">Khám phá</p>
+    <h2>Tìm hiểu thêm về RAnythinG</h2>
+  </div>
+  <div class="explore-grid">
+    <a href="/features" class="explore-card">
+      <span class="explore-icon">⚡</span>
+      <h3>Tính năng</h3>
+      <p>Upload, vector search, chat có citation, notebook, Postgres, Studio tools.</p>
+      <span class="explore-link">Xem chi tiết →</span>
+    </a>
+    <a href="/use-cases" class="explore-card">
+      <span class="explore-icon">🎯</span>
+      <h3>Giải pháp</h3>
+      <p>Nghiên cứu, hợp đồng, tài liệu kỹ thuật, triển khai nội bộ team.</p>
+      <span class="explore-link">Xem use case →</span>
+    </a>
+    <a href="/guide" class="explore-card">
+      <span class="explore-icon">📖</span>
+      <h3>Tài liệu</h3>
+      <p>Cài đặt, Docker, luồng sử dụng, CLI, kiến trúc hệ thống.</p>
+      <span class="explore-link">Đọc hướng dẫn →</span>
+    </a>
+    <a href="/pricing" class="explore-card">
+      <span class="explore-icon">💎</span>
+      <h3>Giá</h3>
+      <p>Miễn phí chạy local. Self-host với Docker cho team nội bộ.</p>
+      <span class="explore-link">Xem bảng giá →</span>
+    </a>
+    <a href="/compare" class="explore-card">
+      <span class="explore-icon">⚖️</span>
+      <h3>So sánh</h3>
+      <p>RAnythinG vs NotebookLM vs ChatGPT upload — bảng so sánh đầy đủ.</p>
+      <span class="explore-link">So sánh ngay →</span>
+    </a>
+    <a href="/about" class="explore-card">
+      <span class="explore-icon">🧭</span>
+      <h3>Về chúng tôi</h3>
+      <p>Sứ mệnh, công nghệ, roadmap — local RAG cho người làm việc với tài liệu.</p>
+      <span class="explore-link">Tìm hiểu →</span>
+    </a>
+  </div>
+</section>
+
+<section class="section cta-section">
+  <div class="cta-box">
+    <h2>Sẵn sàng thử với tài liệu của bạn?</h2>
+    <p>Mở app, tạo notebook, upload file — không cần đăng ký, không cần cloud.</p>
+    <div class="hero-cta">
+      <a href="/app" class="btn-primary btn-lg">Bắt đầu ngay →</a>
+      <a href="/guide" class="btn-ghost btn-lg">Xem hướng dẫn</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

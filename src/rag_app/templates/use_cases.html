@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Giải pháp — RAnythinG{% endblock %}
+{% block meta_description %}RAnythinG cho nghiên cứu, hợp đồng pháp lý, tài liệu kỹ thuật và team nội bộ — RAG local, privacy-first.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <p class="eyebrow">Giải pháp</p>
+  <h1>Cho người làm việc với tài liệu thật</h1>
+  <p class="page-lead">Nghiên cứu, hợp đồng, tài liệu kỹ thuật — không cần gửi file lên dịch vụ bên thứ ba.</p>
+</section>
+
+<section class="section section-tight">
+  <div class="usecase-grid usecase-grid-lg">
+    <article class="usecase-card usecase-card-lg">
+      <span class="uc-icon">🔬</span>
+      <h3>Nghiên cứu &amp; phân tích</h3>
+      <p>Đọc paper, báo cáo dài — hỏi nhanh, trích dẫn đoạn gốc, xuất mind map tổng quan.</p>
+      <ul class="uc-steps">
+        <li>Upload nhiều paper vào một notebook</li>
+        <li>Hỏi “phương pháp chính là gì?” với citation</li>
+        <li>Xuất báo cáo tóm tắt qua Studio</li>
+      </ul>
+    </article>
+    <article class="usecase-card usecase-card-lg">
+      <span class="uc-icon">📋</span>
+      <h3>Hợp đồng &amp; pháp lý</h3>
+      <p>Upload hợp đồng nhạy cảm, tra cứu điều khoản mà dữ liệu không rời máy.</p>
+      <ul class="uc-steps">
+        <li>Chạy local — không upload cloud</li>
+        <li>Tra “điều khoản thanh toán” kèm số nguồn</li>
+        <li>Lưu ghi chú phân tích vào notebook</li>
+      </ul>
+    </article>
+    <article class="usecase-card usecase-card-lg">
+      <span class="uc-icon">⚙️</span>
+      <h3>Tài liệu kỹ thuật</h3>
+      <p>Manual, spec, release note — chat để tìm API, quy trình, changelog nhanh hơn Ctrl+F.</p>
+      <ul class="uc-steps">
+        <li>Index README, API docs, migration guide</li>
+        <li>Chọn nguồn cụ thể khi hỏi</li>
+        <li>Gợi ý câu hỏi tự động từ nội dung</li>
+      </ul>
+    </article>
+    <article class="usecase-card usecase-card-lg">
+      <span class="uc-icon">🏢</span>
+      <h3>Team nội bộ</h3>
+      <p>Self-host với Docker + Postgres. Mỗi dự án một notebook, lịch sử chat được lưu.</p>
+      <ul class="uc-steps">
+        <li><code>docker compose up --build</code></li>
+        <li>PostgreSQL lưu notebook, chat, metadata</li>
+        <li>FAISS index trên volume persistent</li>
+      </ul>
+    </article>
+  </div>
+</section>
+
+<section class="section">
+  <div class="cta-box">
+    <h2>Phù hợp với workflow của bạn?</h2>
+    <p>Tạo notebook đầu tiên và upload tài liệu thử ngay.</p>
+    <div class="hero-cta">
+      <a href="/app" class="btn-primary btn-lg">Bắt đầu →</a>
+      <a href="/guide" class="btn-ghost btn-lg">Hướng dẫn cài đặt</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

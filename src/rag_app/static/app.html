@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAnythinG — App</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <!-- HOME -->
+  <div id="view-home" class="view active">
+    <header class="home-nav">
+      <a href="/" class="home-nav-brand" title="Về trang chủ sản phẩm">RAnythinG</a>
+      <span class="home-nav-tag">App · Local RAG</span>
+      <a href="/" class="home-nav-link">← Trang sản phẩm</a>
+    </header>
+
+    <div class="home-shell">
+      <section class="home-hero home-hero-compact">
+        <div class="hero-orbs" aria-hidden="true">
+          <span class="orb orb-a"></span>
+          <span class="orb orb-b"></span>
+        </div>
+        <div class="hero-grid" aria-hidden="true"></div>
+
+        <p class="hero-badge">Workspace</p>
+
+        <h1 class="hero-title hero-title-sm" aria-label="RAnythinG">
+          <span class="ht-r">R</span><span class="ht-any">AnythinG</span>
+        </h1>
+        <p class="hero-sub">Notebook của bạn</p>
+
+        <p class="hero-tag">Tạo notebook, upload tài liệu, hỏi đáp có trích dẫn — mọi thứ chạy local.</p>
+
+        <button class="btn-primary btn-hero" id="btnCreateNb">➕ Tạo Notebook mới</button>
+      </section>
+
+      <section class="home-notebooks">
+        <div class="home-nb-head">
+          <h2 class="section-label">Notebook của bạn</h2>
+          <span class="nb-count" id="nbCount"></span>
+        </div>
+        <div id="notebookGrid" class="notebook-grid"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- WORKSPACE — khung cố định full viewport -->
+  <div id="view-workspace" class="view">
+    <header class="ws-header">
+      <button class="btn-ghost" id="btnHome">← Notebook</button>
+      <a href="/" class="ws-brand" title="Trang sản phẩm">RAnythinG</a>
+      <input class="ws-title" id="nbTitle" placeholder="Tên notebook" />
+      <span class="ws-status" id="wsStatus"><span class="dot"></span><span id="statusText">—</span></span>
+    </header>
+
+    <main class="ws-panels">
+      <!-- SOURCES -->
+      <section class="panel" id="panelSources">
+        <header class="panel-hd">
+          <span class="panel-icon">📁</span>
+          <span class="panel-title">Sources</span>
+          <span class="panel-badge" id="srcCount">0</span>
+        </header>
+        <div class="sources-upload-wrap">
+          <label class="upload-zone" id="uploadZone">
+            <input type="file" id="fileInput" multiple accept=".pdf,.docx,.pptx,.html,.htm,.txt,.csv,.md" hidden />
+            <div class="upload-zone-inner">
+              <span class="upload-icon">＋</span>
+              <span class="upload-title">Thêm nguồn</span>
+              <span class="upload-formats">PDF · DOCX · TXT · MD · CSV</span>
+              <span class="upload-hint">Kéo thả file vào đây hoặc bấm để chọn</span>
+            </div>
+          </label>
+        </div>
+        <div class="panel-scroll" id="sourcesList"></div>
+      </section>
+
+      <!-- CHAT -->
+      <section class="panel panel-chat" id="panelChat">
+        <header class="panel-hd">
+          <span class="panel-icon">💬</span>
+          <span class="panel-title">Chat</span>
+        </header>
+        <div class="panel-scroll chat-scroll" id="chatMessages">
+          <div class="chat-welcome">
+            <div class="cw-icon">💬</div>
+            <h3>Bắt đầu hội thoại</h3>
+            <p>Upload tài liệu, chọn nguồn, rồi hỏi bất kỳ điều gì.</p>
+          </div>
+        </div>
+        <div class="suggest-bar" id="suggestBar"></div>
+        <footer class="panel-ft chat-ft">
+          <textarea id="chatInput" rows="2" placeholder="Hỏi về tài liệu của bạn..."></textarea>
+          <div class="chat-ft-row">
+            <span id="selCount">0 nguồn</span>
+            <button class="btn-send" id="btnSend">Gửi ➡️</button>
+          </div>
+        </footer>
+      </section>
+
+      <!-- STUDIO -->
+      <section class="panel" id="panelStudio">
+        <header class="panel-hd">
+          <span class="panel-icon">🎨</span>
+          <span class="panel-title">Studio</span>
+        </header>
+        <div class="panel-scroll">
+          <div class="studio-grid" id="studioGrid">
+            <button class="studio-item" data-tool="summary">📝 Tóm tắt</button>
+            <button class="studio-item" data-tool="quiz">❓ Quiz</button>
+            <button class="studio-item" data-tool="flashcards">📇 Cards</button>
+            <button class="studio-item" data-tool="mindmap">🧠 Mind Map</button>
+            <button class="studio-item" data-tool="report">📄 Report</button>
+            <button class="studio-item" data-tool="audio">🎙️ Audio</button>
+            <button class="studio-item" data-tool="video">🎬 Video</button>
+            <button class="studio-item" data-tool="infographic">📊 Infographic</button>
+            <button class="studio-item" data-tool="slides">🖥️ Slides</button>
+            <button class="studio-item" data-tool="datatable">📋 Data</button>
+          </div>
+          <div id="studioSaved" class="studio-saved hidden"></div>
+          <hr class="divider" />
+          <p class="mini-label">Ghi chú</p>
+          <div id="notesList"></div>
+          <button class="btn-ghost full" id="btnAddNote">+ Thêm ghi chú</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="loading" class="loading hidden"><div class="spinner"></div><span>Đang xử lý...</span></div>
+
+  <!-- Studio output modal -->
+  <div id="studioModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-backdrop" id="studioModalBackdrop"></div>
+    <div class="modal-card studio-modal-card">
+      <header class="modal-hd">
+        <span id="studioModalTitle" class="modal-title">Kết quả Studio</span>
+        <button class="modal-close" id="studioModalClose" aria-label="Đóng">✕</button>
+      </header>
+      <div class="modal-body" id="studioModalBody"></div>
+    </div>
+  </div>
+
+  <div id="noteModal" class="modal hidden" role="dialog" aria-labelledby="noteModalTitle" aria-modal="true">
+    <div class="modal-backdrop" id="noteModalBackdrop"></div>
+    <div class="modal-card">
+      <header class="modal-hd">
+        <h2 id="noteModalTitle">Thêm ghi chú</h2>
+        <button type="button" class="modal-close" id="noteModalClose" aria-label="Đóng">✕</button>
+      </header>
+      <div class="modal-body">
+        <label class="modal-label" for="noteTitleInput">Tiêu đề</label>
+        <input type="text" id="noteTitleInput" class="modal-input" placeholder="Tiêu đề ghi chú..." maxlength="200" />
+        <label class="modal-label" for="noteContentInput">Nội dung</label>
+        <textarea id="noteContentInput" class="modal-textarea" rows="6" placeholder="Viết nội dung ghi chú..."></textarea>
+        <p id="noteModalError" class="modal-error hidden"></p>
+      </div>
+      <footer class="modal-ft">
+        <button type="button" class="btn-ghost" id="noteModalCancel">Hủy</button>
+        <button type="button" class="btn-primary" id="noteModalSave">Lưu ghi chú</button>
+      </footer>
+    </div>
+  </div>
+
+  <div id="confirmModal" class="modal hidden" role="alertdialog" aria-labelledby="confirmModalTitle" aria-modal="true">
+    <div class="modal-backdrop" id="confirmModalBackdrop"></div>
+    <div class="modal-card modal-card-sm">
+      <div class="modal-body confirm-body">
+        <div class="confirm-icon" aria-hidden="true">⚠️</div>
+        <h2 id="confirmModalTitle" class="confirm-title">Xác nhận</h2>
+        <p id="confirmModalMessage" class="confirm-message"></p>
+      </div>
+      <footer class="modal-ft">
+        <button type="button" class="btn-ghost" id="confirmModalCancel">Hủy</button>
+        <button type="button" class="btn-danger" id="confirmModalConfirm">Xóa</button>
+      </footer>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Tài liệu — RAnythinG{% endblock %}
+{% block meta_description %}Hướng dẫn cài đặt và sử dụng RAnythinG: Docker, Python, luồng notebook, CLI, kiến trúc.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <p class="eyebrow">Tài liệu</p>
+  <h1>Hướng dẫn cài đặt &amp; sử dụng</h1>
+  <p class="page-lead">Từ zero đến notebook đầu tiên — chạy local hoặc Docker.</p>
+</section>
+
+<section class="section section-tight">
+  <div class="docs-layout">
+    <aside class="docs-sidebar">
+      <nav>
+        <a href="#install" class="active">Cài đặt</a>
+        <a href="#docker">Docker</a>
+        <a href="#usage">Luồng sử dụng</a>
+        <a href="#cli">CLI</a>
+        <a href="#architecture">Kiến trúc</a>
+      </nav>
+    </aside>
+    <div class="docs-content prose">
+      <h2 id="install">Cài đặt (Python)</h2>
+      <pre class="code-block"><code>python -m venv .venv
+.\.venv\Scripts\Activate.ps1   # Windows
+pip install -r requirements.txt
+python app.py</code></pre>
+      <p>Mở <strong>http://localhost:8000</strong> (trang sản phẩm) và <strong>http://localhost:8000/app</strong> (ứng dụng).</p>
+
+      <h2 id="docker">Docker (khuyên dùng)</h2>
+      <pre class="code-block"><code>docker compose up --build</code></pre>
+      <ul>
+        <li>App + PostgreSQL (pgvector) trong container</li>
+        <li>Postgres: port <code>5432</code>, user/pass/db = <code>rananything</code></li>
+        <li>FAISS index → volume <code>app_data</code></li>
+      </ul>
+      <p>Kiểm tra storage: <code>GET /api/health</code></p>
+
+      <h2 id="usage">Luồng sử dụng</h2>
+      <ol class="docs-ol">
+        <li>Tạo notebook mới tại <a href="/app">/app</a></li>
+        <li>Upload tài liệu ở panel <strong>Sources</strong> (tự index)</li>
+        <li>Chọn nguồn muốn dùng cho chat</li>
+        <li>Hỏi trong <strong>Chat</strong> hoặc dùng câu hỏi gợi ý</li>
+        <li>Dùng <strong>Studio</strong> để tạo quiz, flashcard, báo cáo…</li>
+      </ol>
+
+      <h2 id="cli">CLI (tùy chọn)</h2>
+      <pre class="code-block"><code>python -m src.rag_app.cli build --source-folder ./docs --output-dir ./data
+python -m src.rag_app.cli query --index-path ./data/rag_index.faiss \
+  --metadata-path ./data/rag_index.faiss.json --query "Nội dung chính?"</code></pre>
+
+      <h2 id="architecture">Kiến trúc</h2>
+      <table class="docs-table">
+        <tr><th>Thành phần</th><th>Mô tả</th></tr>
+        <tr><td>Embedding</td><td>intfloat/multilingual-e5-small</td></tr>
+        <tr><td>Reranker</td><td>BAAI/bge-reranker-v2-m3</td></tr>
+        <tr><td>Generation</td><td>Qwen/Qwen2.5-1.5B-Instruct</td></tr>
+        <tr><td>Vector store</td><td>FAISS (+ BM25 hybrid)</td></tr>
+        <tr><td>Storage</td><td>Filesystem hoặc PostgreSQL</td></tr>
+      </table>
+
+      <div class="hero-cta" style="margin-top:32px;">
+        <a href="/app" class="btn-primary">Mở ứng dụng →</a>
+        <a href="/features" class="btn-ghost">Xem tính năng</a>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.querySelectorAll('.docs-sidebar a').forEach((a) => {
+  a.addEventListener('click', (e) => {
+    document.querySelectorAll('.docs-sidebar a').forEach((x) => x.classList.remove('active'));
+    a.classList.add('active');
+  });
+});
+</script>
+{% endblock %}

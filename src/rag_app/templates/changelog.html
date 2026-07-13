@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Changelog — RAnythinG{% endblock %}
+{% block meta_description %}Lịch sử cập nhật RAnythinG — tính năng mới, cải tiến, sửa lỗi.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <p class="eyebrow">Changelog</p>
+  <h1>Lịch sử cập nhật</h1>
+  <p class="page-lead">Theo dõi những thay đổi mới nhất của RAnythinG.</p>
+</section>
+
+<section class="section section-tight">
+  <div class="changelog">
+    <article class="changelog-entry">
+      <div class="changelog-meta">
+        <span class="changelog-version">v0.3.0</span>
+        <time class="changelog-date">2026-07-08</time>
+        <span class="changelog-tag tag-new">Mới</span>
+      </div>
+      <h3>Studio thật, Chat streaming, index tăng dần</h3>
+      <ul>
+        <li>Studio (Tóm tắt, Quiz, Flashcards, Mind Map, Report, Audio/Video Overview, Infographic, Slides, Data Table) sinh nội dung bằng LLM ngay trên UI chính, qua API <code>/api/notebooks/{id}/studio/{tool}</code></li>
+        <li>Chat trả lời theo kiểu streaming (SSE) và nhớ vài lượt hội thoại gần nhất</li>
+        <li>Thêm/xóa tài liệu trong notebook đã index chạy tăng dần thay vì lập lại chỉ mục từ đầu</li>
+        <li>Gỡ bỏ Streamlit UI legacy — chỉ còn một giao diện HTML/CSS/JS duy nhất</li>
+      </ul>
+    </article>
+
+    <article class="changelog-entry">
+      <div class="changelog-meta">
+        <span class="changelog-version">v0.2.0</span>
+        <time class="changelog-date">2026-07-05</time>
+      </div>
+      <h3>Website sản phẩm đa trang</h3>
+      <ul>
+        <li>Trang chủ, Tính năng, Giải pháp, Tài liệu, Giá, So sánh, Changelog, Về chúng tôi</li>
+        <li>Tách app sang <code>/app</code></li>
+        <li>Layout Jinja2 dùng chung nav/footer</li>
+        <li>Sửa CI: PYTHONPATH cho pytest</li>
+      </ul>
+    </article>
+
+    <article class="changelog-entry">
+      <div class="changelog-meta">
+        <span class="changelog-version">v0.1.0</span>
+        <time class="changelog-date">2026-07-03</time>
+      </div>
+      <h3>Phiên bản đầu tiên</h3>
+      <ul>
+        <li>App RAG local kiểu NotebookLM</li>
+        <li>Upload PDF/DOCX/PPTX/MD, FAISS index, chat có citation</li>
+        <li>Workspace 3 panel: Sources | Chat | Studio</li>
+        <li>Docker + PostgreSQL (pgvector)</li>
+        <li>Streamlit UI legacy với Studio đầy đủ</li>
+        <li>CLI build &amp; query</li>
+      </ul>
+    </article>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="{% block meta_description %}RAnythinG — Hỏi đáp tài liệu chạy local. Upload PDF, chat có trích dẫn, Studio biến tài liệu thành công cụ làm việc.{% endblock %}" />
+  <title>{% block title %}RAnythinG{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/landing.css" />
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <nav class="site-nav" id="top">
+    <a href="/" class="nav-brand" aria-label="RAnythinG trang chủ">
+      <span class="brand-r">R</span><span class="brand-any">AnythinG</span>
+    </a>
+    <div class="nav-links">
+      {% for item in nav_items %}
+      <a href="{{ item.href }}" class="{% if page_key == item.key %}active{% endif %}">{{ item.label }}</a>
+      {% endfor %}
+    </div>
+    <div class="nav-actions">
+      <a href="https://github.com/lqb464/RAnythinG" class="btn-ghost nav-gh" target="_blank" rel="noopener">GitHub</a>
+      <a href="/app" class="btn-primary">Dùng ngay →</a>
+    </div>
+    <button class="nav-toggle" id="navToggle" aria-label="Mở menu" aria-expanded="false">☰</button>
+  </nav>
+
+  <div class="mobile-menu hidden" id="mobileMenu">
+    {% for item in nav_items %}
+    <a href="{{ item.href }}">{{ item.label }}</a>
+    {% endfor %}
+    <a href="/about">Về chúng tôi</a>
+    <a href="/changelog">Changelog</a>
+    <a href="/app" class="btn-primary full">Dùng ngay →</a>
+  </div>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <a href="/" class="nav-brand">
+          <span class="brand-r">R</span><span class="brand-any">AnythinG</span>
+        </a>
+        <p>Anything · powered by RAG · chạy trên máy bạn</p>
+      </div>
+      <div class="footer-links">
+        {% for section in footer_sections %}
+        <div>
+          <strong>{{ section.title }}</strong>
+          {% for link in section.links %}
+          <a href="{{ link.href }}">{{ link.label }}</a>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    <p class="footer-copy">© 2026 RAnythinG · Local RAG · Privacy-first</p>
+  </footer>
+
+  <script src="/static/landing.js"></script>
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

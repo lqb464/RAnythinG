@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Về chúng tôi — RAnythinG{% endblock %}
+{% block meta_description %}RAnythinG — local RAG cho người làm việc với tài liệu. Sứ mệnh, công nghệ, roadmap.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <p class="eyebrow">Về chúng tôi</p>
+  <h1>Local RAG cho tài liệu của bạn</h1>
+  <p class="page-lead">Anything · powered by RAG — chạy trên máy bạn, không lock-in cloud.</p>
+</section>
+
+<section class="section section-tight">
+  <div class="about-grid">
+    <article class="about-block">
+      <h2>Sứ mệnh</h2>
+      <p>RAnythinG giúp bạn hỏi đáp và làm việc với tài liệu riêng — hợp đồng, báo cáo, spec kỹ thuật — mà không phải đưa dữ liệu lên dịch vụ bên thứ ba.</p>
+      <p>Chúng tôi tin rằng AI hữu ích nhất khi bám nguồn thật, chạy nơi bạn kiểm soát được, và minh bạch về cách trả lời.</p>
+    </article>
+    <article class="about-block">
+      <h2>Công nghệ</h2>
+      <ul class="about-tech">
+        <li><strong>Backend:</strong> FastAPI, SQLAlchemy, FAISS</li>
+        <li><strong>ML:</strong> sentence-transformers, transformers, PyTorch</li>
+        <li><strong>Storage:</strong> Filesystem hoặc PostgreSQL + pgvector</li>
+        <li><strong>Frontend:</strong> HTML/CSS/JS (app) + Jinja2 (marketing)</li>
+        <li><strong>Deploy:</strong> Docker Compose</li>
+      </ul>
+    </article>
+    <article class="about-block">
+      <h2>Roadmap</h2>
+      <ul class="roadmap-list">
+        <li><span class="roadmap-status done">✓</span> Core RAG: upload, chat, citations</li>
+        <li><span class="roadmap-status done">✓</span> Website sản phẩm đa trang</li>
+        <li><span class="roadmap-status wip">…</span> Studio API trên UI chính</li>
+        <li><span class="roadmap-status planned">○</span> Hỗ trợ model LLM tùy chọn (Ollama)</li>
+        <li><span class="roadmap-status planned">○</span> Export notebook / backup</li>
+        <li><span class="roadmap-status planned">○</span> Multi-user &amp; auth</li>
+      </ul>
+    </article>
+    <article class="about-block">
+      <h2>Mã nguồn</h2>
+      <p>RAnythinG là dự án mã nguồn mở. Đóng góp, báo lỗi và theo dõi phát triển trên GitHub.</p>
+      <a href="https://github.com/lqb464/RAnythinG" class="btn-primary" target="_blank" rel="noopener">GitHub →</a>
+    </article>
+  </div>
+</section>
+{% endblock %}
