@@ -396,6 +396,84 @@ async def add_note(notebook_id: str, body: NoteCreate):
     return notes
 
 
+@app.put("/api/notebooks/{notebook_id}/notes/{note_id}")
+async def update_note(notebook_id: str, note_id: str, body: NoteCreate):
+    if not store.get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook không tồn tại")
+    title = body.title.strip()
+    content = body.content.strip()
+    if not title or not content:
+        raise HTTPException(status_code=400, detail="Tiêu đề và nội dung không được để trống")
+
+    notes = store.load_notes(notebook_id)
+    found = False
+    old_title = ""
+    for n in notes:
+        if n["id"] == note_id:
+            old_title = n.get("title", "")
+            n["title"] = title
+            n["content"] = content
+            found = True
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="Ghi chú không tồn tại")
+    store.save_notes(notebook_id, notes)
+
+    if old_title:
+        agent_cache.remove_document(notebook_id, f"[Ghi chú] {old_title}")
+    agent = await agent_cache.async_get_agent(notebook_id)
+    loop = asyncio.get_event_loop()
+    if len(agent.chunks) > 0:
+        await loop.run_in_executor(
+            None, agent_cache.add_document, notebook_id, f"[Ghi chú] {title}", content
+        )
+    return notes
+
+
+@app.delete("/api/notebooks/{notebook_id}/notes/{note_id}")
+async def delete_note(notebook_id: str, note_id: str):
+    if not store.get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook không tồn tại")
+    notes = store.load_notes(notebook_id)
+    note_to_remove = next((n for n in notes if n["id"] == note_id), None)
+    if not note_to_remove:
+        raise HTTPException(status_code=404, detail="Ghi chú không tồn tại")
+
+    notes = [n for n in notes if n["id"] != note_id]
+    store.save_notes(notebook_id, notes)
+
+    agent_cache.remove_document(notebook_id, f"[Ghi chú] {note_to_remove['title']}")
+    return notes
+
+
+@app.post("/api/notebooks/{notebook_id}/notes/{note_id}/to_source")
+async def note_to_source(notebook_id: str, note_id: str):
+    if not store.get_notebook(notebook_id):
+        raise HTTPException(status_code=404, detail="Notebook không tồn tại")
+    notes = store.load_notes(notebook_id)
+    note = next((n for n in notes if n["id"] == note_id), None)
+    if not note:
+        raise HTTPException(status_code=404, detail="Ghi chú không tồn tại")
+
+    clean_title = re.sub(r'[^a-zA-Z0-9_\-À-ỹ ]', '', note['title']).strip() or "Ghi chu"
+    filename = f"Ghi chú - {clean_title[:40]}.txt"
+    data = f"# {note['title']}\n\n{note['content']}".encode("utf-8")
+    saved_name = store.save_upload_bytes(notebook_id, filename, data)
+    if not saved_name:
+        raise HTTPException(status_code=500, detail="Không thể lưu file nguồn")
+
+    agent = await agent_cache.async_get_agent(notebook_id)
+    loop = asyncio.get_event_loop()
+    if len(agent.chunks) > 0:
+        await loop.run_in_executor(
+            None, agent_cache.add_document, notebook_id, saved_name, note["content"]
+        )
+    else:
+        await loop.run_in_executor(None, agent_cache.rebuild_agent, notebook_id)
+
+    return {"ok": True, "filename": saved_name, "sources": store.list_source_files(notebook_id)}
+
+
 @app.post("/api/notebooks/{notebook_id}/studio/{tool}")
 async def studio_generate(notebook_id: str, tool: str, body: StudioRequest):
     if not store.get_notebook(notebook_id):
@@ -602,4 +680,4 @@ def run(host: str | None = None, port: int | None = None) -> None:
 
     host = host or os.getenv("HOST", "127.0.0.1")
     port = int(port or os.getenv("PORT", "8001"))
-    uvicorn.run("src.rag_app.server:app", host=host, port=port, reload=False)
+    uvicorn.run("src.rag_app.server:app", host=host, port=port, reload=True)

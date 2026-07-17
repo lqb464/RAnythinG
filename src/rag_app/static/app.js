@@ -323,7 +323,7 @@ async function loadChatHistory() {
   box.innerHTML = "";
   history.forEach((h) => {
     appendMessage("user", h.query);
-    appendMessage("bot", h.answer_html || h.answer, h.sources);
+    appendMessage("bot", h.answer, h.sources);
   });
   scrollChat();
 }
@@ -333,24 +333,24 @@ function appendMessage(role, text, sources) {
   $(".chat-welcome", box)?.remove();
   const div = document.createElement("div");
   div.className = `msg ${role}`;
-  if (role === "bot") {
-    div.innerHTML = typeof text === "string" && text.includes("<sup") ? text : formatCites(text);
-    if (sources?.length) {
-      const tags = document.createElement("div");
-      tags.className = "msg-tags";
-      [...new Set(sources.map((s) => (typeof s === "string" ? s : s.source)))].forEach((s) => {
-        const t = document.createElement("span");
-        t.className = "msg-tag";
-        t.textContent = s;
-        tags.appendChild(t);
-      });
-      div.appendChild(tags);
-    }
-  } else {
-    div.textContent = text;
+  const body = document.createElement("div");
+  body.className = "msg-body md-content";
+  body.innerHTML = renderMarkdown(text);
+  div.appendChild(body);
+  if (role === "bot" && sources?.length) {
+    const tags = document.createElement("div");
+    tags.className = "msg-tags";
+    [...new Set(sources.map((s) => (typeof s === "string" ? s : s.source)))].forEach((s) => {
+      const t = document.createElement("span");
+      t.className = "msg-tag";
+      t.textContent = s;
+      tags.appendChild(t);
+    });
+    div.appendChild(tags);
   }
   box.appendChild(div);
-  return true;
+  scrollChat();
+  return div;
 }
 
 function formatCites(text) {
@@ -371,7 +371,7 @@ function appendStreamingMessage() {
   $(".chat-welcome", box)?.remove();
   const div = document.createElement("div");
   div.className = "msg bot";
-  div.innerHTML = '<div class="msg-body"></div>';
+  div.innerHTML = '<div class="msg-body md-content"></div>';
   box.appendChild(div);
   return div;
 }
@@ -389,6 +389,140 @@ function finalizeStreamingMessage(div, sources) {
   div.appendChild(tags);
 }
 
+function autoGrowInput() {
+  const input = $("#chatInput");
+  const preview = $("#chatInputPreview");
+  if (!input) return;
+  input.style.height = "52px";
+  const newHeight = Math.min(Math.max(input.scrollHeight, 52), 220);
+  input.style.height = newHeight + "px";
+  if (preview) preview.style.height = newHeight + "px";
+  input.style.overflowY = input.scrollHeight > 220 ? "auto" : "hidden";
+}
+
+/** Claude-style live Markdown preview for the composer (keeps char widths for caret sync). */
+function updateInputPreview() {
+  const input = $("#chatInput");
+  const preview = $("#chatInputPreview");
+  if (!input || !preview) return;
+  autoGrowInput();
+  const text = input.value;
+  if (!text) {
+    preview.innerHTML = "";
+    return;
+  }
+
+  const lines = text.split("\n");
+  const parts = []; // { html, block?: true } — block chunks are full-width code cards
+  let inFence = false;
+  let fenceLang = "";
+  let fenceRows = [];
+
+  const highlightLine = (code, lang) => {
+    if (!lang || typeof hljs === "undefined" || !code.trim()) return esc(code);
+    try {
+      if (hljs.getLanguage(lang)) {
+        return hljs.highlight(code, { language: lang }).value;
+      }
+    } catch (_) { /* fall through */ }
+    return esc(code);
+  };
+
+  const styleInline = (s) => {
+    let h = esc(s);
+    h = h.replace(/`([^`]+)`/g, (_m, code) =>
+      `<span class="cip-inline"><span class="cip-hidden">\`</span><span class="cip-inline-code">${code}</span><span class="cip-hidden">\`</span></span>`
+    );
+    h = h.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    h = h.replace(/\*(.+?)\*/g, "<em>$1</em>");
+    return h;
+  };
+
+  const flushFence = () => {
+    if (!fenceRows.length) return;
+    parts.push({
+      block: true,
+      html: `<div class="cip-code-card">${fenceRows.join("")}</div>`,
+    });
+    fenceRows = [];
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = line.match(/^(\s*)```([a-zA-Z0-9_+-]*)\s*$/);
+    if (fence) {
+      const indent = esc(fence[1]);
+      const lang = (fence[2] || "").toLowerCase();
+      if (!inFence) {
+        inFence = true;
+        fenceLang = lang;
+        fenceRows.push(
+          `<div class="cip-block cip-block-head">${indent}` +
+            `<span class="cip-tick">\`\`\`</span>` +
+            (lang ? `<span class="cip-lang">${esc(lang)}</span>` : "") +
+            `</div>`
+        );
+      } else {
+        fenceRows.push(
+          `<div class="cip-block cip-block-foot">${indent}` +
+            `<span class="cip-tick">${esc(line.slice(fence[1].length))}</span>` +
+            `</div>`
+        );
+        inFence = false;
+        fenceLang = "";
+        flushFence();
+      }
+      continue;
+    }
+    if (inFence) {
+      const hl = highlightLine(line, fenceLang);
+      fenceRows.push(`<div class="cip-block cip-code-line hljs">${hl || "&nbsp;"}</div>`);
+      continue;
+    }
+    const quote = line.match(/^(\s*)>(.*)$/);
+    if (quote) {
+      parts.push({
+        html:
+          `${esc(quote[1])}<span class="cip-quote"><span class="cip-qmark">&gt;</span>${styleInline(quote[2])}</span>`,
+      });
+      continue;
+    }
+    // Unordered list: keep "- "/"* " widths, draw a bullet on top (caret-safe)
+    const ul = line.match(/^(\s*)([-*])(\s+)(.*)$/);
+    if (ul) {
+      parts.push({
+        html:
+          `${esc(ul[1])}<span class="cip-ul-mark">${esc(ul[2])}</span>${esc(ul[3])}` +
+          `<span class="cip-li-body">${styleInline(ul[4])}</span>`,
+      });
+      continue;
+    }
+    // Ordered list: tint the "1." marker
+    const ol = line.match(/^(\s*)(\d+\.)(\s+)(.*)$/);
+    if (ol) {
+      parts.push({
+        html:
+          `${esc(ol[1])}<span class="cip-ol-mark">${esc(ol[2])}</span>${esc(ol[3])}` +
+          `<span class="cip-li-body">${styleInline(ol[4])}</span>`,
+      });
+      continue;
+    }
+    parts.push({ html: styleInline(line) });
+  }
+  // Unclosed fence still showing
+  flushFence();
+
+  // Join: normal lines with <br/>, code cards as block units (no extra br inside)
+  let html = "";
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (i > 0) html += "<br/>";
+    html += p.html;
+  }
+  preview.innerHTML = html;
+  preview.scrollTop = input.scrollTop;
+}
+
 async function sendChat(query) {
   query = (query || $("#chatInput").value).trim();
   if (!query) return;
@@ -398,6 +532,7 @@ async function sendChat(query) {
   appendMessage("user", query);
   scrollChat();
   $("#chatInput").value = "";
+  updateInputPreview();
   $("#btnSend").disabled = true;
   showChatTyping(true);
 
@@ -442,7 +577,7 @@ async function sendChat(query) {
             botDiv = appendStreamingMessage();
           }
           accumulated += payload.text;
-          botDiv.querySelector(".msg-body").innerHTML = formatCites(accumulated);
+          botDiv.querySelector(".msg-body").innerHTML = renderMarkdown(accumulated);
           scrollChat();
         } else if (payload.type === "replace" || payload.type === "done") {
           accumulated = payload.answer || accumulated;
@@ -450,7 +585,7 @@ async function sendChat(query) {
             showChatTyping(false);
             botDiv = appendStreamingMessage();
           }
-          botDiv.querySelector(".msg-body").innerHTML = formatCites(accumulated);
+          botDiv.querySelector(".msg-body").innerHTML = renderMarkdown(accumulated);
           if (payload.type === "done") finalizeStreamingMessage(botDiv, sources);
         }
       }
@@ -467,8 +602,90 @@ async function sendChat(query) {
 
 $("#btnSend")?.addEventListener("click", () => sendChat());
 $("#chatInput")?.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const el = e.target;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const val = el.value;
+    const indent = "  ";
+    el.value = val.substring(0, start) + indent + val.substring(end);
+    el.selectionStart = el.selectionEnd = start + indent.length;
+    updateInputPreview();
+    return;
+  }
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendChat();
+    return;
+  }
+  if (e.key === "Enter" && e.shiftKey) {
+    const el = e.target;
+    const val = el.value;
+    const start = el.selectionStart;
+    const lineStart = val.lastIndexOf("\n", start - 1) + 1;
+    const currentLine = val.substring(lineStart, start);
+
+    const fenceMatch = currentLine.match(/^(\s*)```([a-zA-Z0-9_-]*)\s*$/);
+    if (fenceMatch) {
+      const lang = fenceMatch[2];
+      let isOpening = lang.length > 0;
+      if (!isOpening) {
+        const textBefore = val.substring(0, lineStart);
+        const previousFences = (textBefore.match(/```/g) || []).length;
+        if (previousFences % 2 === 0) {
+          isOpening = true;
+        }
+      }
+      if (isOpening) {
+        e.preventDefault();
+        const indent = fenceMatch[1];
+        const insertion = "\n" + indent + "\n" + indent + "```";
+        el.value = val.substring(0, start) + insertion + val.substring(el.selectionEnd);
+        el.selectionStart = el.selectionEnd = start + 1 + indent.length;
+        updateInputPreview();
+        return;
+      }
+    }
+
+    const bulletMatch = currentLine.match(/^(\s*)[-*]\s+(.*)$/);
+    if (bulletMatch) {
+      e.preventDefault();
+      if (!bulletMatch[2].trim()) {
+        el.value = val.substring(0, lineStart) + val.substring(start);
+        el.selectionStart = el.selectionEnd = lineStart;
+      } else {
+        const insertion = "\n" + bulletMatch[1] + "- ";
+        el.value = val.substring(0, start) + insertion + val.substring(el.selectionEnd);
+        el.selectionStart = el.selectionEnd = start + insertion.length;
+      }
+      updateInputPreview();
+      return;
+    }
+
+    const numberMatch = currentLine.match(/^(\s*)(\d+)\.\s+(.*)$/);
+    if (numberMatch) {
+      e.preventDefault();
+      if (!numberMatch[3].trim()) {
+        el.value = val.substring(0, lineStart) + val.substring(start);
+        el.selectionStart = el.selectionEnd = lineStart;
+      } else {
+        const nextNum = parseInt(numberMatch[2], 10) + 1;
+        const insertion = "\n" + numberMatch[1] + nextNum + ". ";
+        el.value = val.substring(0, start) + insertion + val.substring(el.selectionEnd);
+        el.selectionStart = el.selectionEnd = start + insertion.length;
+      }
+      updateInputPreview();
+      return;
+    }
+  }
 });
+$("#chatInput")?.addEventListener("input", updateInputPreview);
+$("#chatInput")?.addEventListener("scroll", () => {
+  const preview = $("#chatInputPreview");
+  if (preview) preview.scrollTop = $("#chatInput").scrollTop;
+});
+$("#chatInput")?.addEventListener("focus", updateInputPreview);
 
 /* Header */
 $("#btnHome")?.addEventListener("click", () => {
@@ -483,6 +700,8 @@ $("#nbTitle")?.addEventListener("change", async (e) => {
 });
 
 /* Notes */
+let editingNoteId = null;
+
 function notePreview(content, maxLen = 72) {
   const text = (content || "").trim();
   if (!text) return "";
@@ -501,15 +720,61 @@ async function loadNotes() {
     .map((n) => {
       const preview = notePreview(n.content);
       const previewHtml = preview ? `<span>${preview}</span>` : "";
-      return `<div class="note-item"><strong>${esc(n.title)}</strong>${previewHtml}</div>`;
+      return `<div class="note-item" data-id="${esc(n.id)}">
+        <div class="note-item-hd">
+          <strong>${esc(n.title)}</strong>
+          <div class="note-actions">
+            <button type="button" class="btn-note-action btn-note-to-source" data-id="${esc(n.id)}" title="Chuyển thành Nguồn tài liệu">📥</button>
+            <button type="button" class="btn-note-action btn-note-del" data-id="${esc(n.id)}" title="Xóa ghi chú">🗑️</button>
+          </div>
+        </div>
+        ${previewHtml}
+      </div>`;
     })
     .join("");
+
+  list.querySelectorAll(".note-item").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      if (e.target.closest(".btn-note-to-source")) {
+        e.stopPropagation();
+        convertNoteToSource(el.dataset.id);
+        return;
+      }
+      if (e.target.closest(".btn-note-del")) {
+        e.stopPropagation();
+        removeNote(el.dataset.id);
+        return;
+      }
+      const note = notes.find((n) => n.id === el.dataset.id);
+      if (note) openNoteModal(note);
+    });
+  });
 }
 
-function openNoteModal() {
+function openNoteModal(note = null) {
   const modal = $("#noteModal");
-  $("#noteTitleInput").value = "";
-  $("#noteContentInput").value = "";
+  const delBtn = $("#noteModalDelete");
+  const toSourceBtn = $("#noteModalToSource");
+  const saveBtn = $("#noteModalSave");
+
+  if (note && note.id) {
+    editingNoteId = note.id;
+    $("#noteModalTitle").textContent = "Xem / Sửa Ghi chú";
+    $("#noteTitleInput").value = note.title || "";
+    $("#noteContentInput").value = note.content || "";
+    saveBtn.textContent = "Cập nhật";
+    delBtn?.classList.remove("hidden");
+    toSourceBtn?.classList.remove("hidden");
+  } else {
+    editingNoteId = null;
+    $("#noteModalTitle").textContent = "Thêm ghi chú";
+    $("#noteTitleInput").value = "";
+    $("#noteContentInput").value = "";
+    saveBtn.textContent = "Lưu ghi chú";
+    delBtn?.classList.add("hidden");
+    toSourceBtn?.classList.add("hidden");
+  }
+
   const err = $("#noteModalError");
   err.textContent = "";
   err.classList.add("hidden");
@@ -519,6 +784,31 @@ function openNoteModal() {
 
 function closeNoteModal() {
   $("#noteModal").classList.add("hidden");
+}
+
+async function removeNote(id) {
+  if (!confirm("Bạn có chắc muốn xóa ghi chú này?")) return;
+  try {
+    await api(`/api/notebooks/${notebookId}/notes/${id}`, { method: "DELETE" });
+    toast("Đã xóa ghi chú");
+    closeNoteModal();
+    await loadNotes();
+    await refreshNotebook();
+  } catch (e) {
+    toast(e.message || "Lỗi khi xóa ghi chú");
+  }
+}
+
+async function convertNoteToSource(id) {
+  try {
+    toast("Đang chuyển ghi chú thành file nguồn...");
+    await api(`/api/notebooks/${notebookId}/notes/${id}/to_source`, { method: "POST" });
+    toast("Đã thêm ghi chú vào Sources!");
+    closeNoteModal();
+    await refreshNotebook();
+  } catch (e) {
+    toast(e.message || "Lỗi khi chuyển thành nguồn");
+  }
 }
 
 async function saveNote() {
@@ -537,14 +827,22 @@ async function saveNote() {
   err.classList.add("hidden");
 
   try {
-    const notes = await api(`/api/notebooks/${notebookId}/notes`, {
-      method: "POST",
-      body: { title, content },
-    });
-    const newNote = notes[notes.length - 1];
-    if (newNote) selectedSources.add(`[Ghi chú] ${newNote.title}`);
+    if (editingNoteId) {
+      await api(`/api/notebooks/${notebookId}/notes/${editingNoteId}`, {
+        method: "PUT",
+        body: { title, content },
+      });
+      toast("Đã cập nhật ghi chú");
+    } else {
+      const notes = await api(`/api/notebooks/${notebookId}/notes`, {
+        method: "POST",
+        body: { title, content },
+      });
+      const newNote = notes[notes.length - 1];
+      if (newNote) selectedSources.add(`[Ghi chú] ${newNote.title}`);
+      toast("Đã thêm ghi chú");
+    }
     closeNoteModal();
-    toast("Đã thêm ghi chú");
     await refreshNotebook();
     await loadNotes();
     await loadSuggestions();
@@ -556,9 +854,11 @@ async function saveNote() {
   }
 }
 
-$("#btnAddNote")?.addEventListener("click", openNoteModal);
+$("#btnAddNote")?.addEventListener("click", () => openNoteModal(null));
 $("#noteModalClose")?.addEventListener("click", closeNoteModal);
 $("#noteModalCancel")?.addEventListener("click", closeNoteModal);
+$("#noteModalDelete")?.addEventListener("click", () => editingNoteId && removeNote(editingNoteId));
+$("#noteModalToSource")?.addEventListener("click", () => editingNoteId && convertNoteToSource(editingNoteId));
 $("#noteModalBackdrop")?.addEventListener("click", closeNoteModal);
 $("#noteModalSave")?.addEventListener("click", saveNote);
 $("#noteModal")?.addEventListener("keydown", (e) => {
@@ -653,48 +953,121 @@ function renderStudioSaved(outputs) {
   });
 }
 
+function formatCodeBlocks(html) {
+  if (!html) return html;
+  return html.replace(/<pre><code(?:\s+class="([^"]*)")?>([\s\S]*?)<\/code><\/pre>/g, (match, classAttr, codeContent) => {
+    const langMatch = (classAttr || "").match(/language-([a-zA-Z0-9_+-]+)/);
+    const l = (langMatch ? langMatch[1] : "text").toLowerCase();
+    let highlighted = codeContent;
+    if (typeof hljs !== "undefined" && langMatch) {
+      try {
+        const rawCode = codeContent
+          .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+          .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x27;/g, "'");
+        if (hljs.getLanguage(l)) {
+          highlighted = hljs.highlight(rawCode, { language: l }).value;
+        }
+      } catch (_) { /* keep plain escaped html from marked */ }
+    }
+    return `<div class="code-block-wrapper">` +
+      `<div class="code-header"><span class="code-lang">${esc(l)}</span><button type="button" class="btn-copy-code" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText); toast('Đã sao chép');">Copy</button></div>` +
+      `<pre><code class="hljs language-${esc(l)}">${highlighted}</code></pre>` +
+      `</div>`;
+  });
+}
+
 function inlineMd(s) {
   let out = esc(String(s ?? ""));
+  out = out.replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (match, lang, codeContent) => {
+    const l = (lang || "code").toLowerCase();
+    return `<div class="code-block-wrapper"><div class="code-header"><span class="code-lang">${esc(l)}</span><button class="btn-copy-code" onclick="navigator.clipboard.writeText(this.closest('.code-block-wrapper').querySelector('code').innerText); toast('Đã sao chép');">📋 Copy</button></div><pre><code class="language-${esc(l)}">${esc(codeContent.trimEnd())}</code></pre></div>`;
+  });
+  out = out.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
   out = out.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   out = out.replace(/\*(.+?)\*/g, "<em>$1</em>");
-  out = out.replace(/\[(\d+)\]/g, '<sup class="cite">$1</sup>');
+  out = out.replace(/\[(\d+)\]/g, '<sup class="cite" title="Nguồn $1">$1</sup>');
   return out;
 }
 
 function renderMarkdown(md) {
   if (!md) return "<p>(Không có nội dung)</p>";
-  const lines = String(md).split("\n");
+  // Strip server-side cite HTML if history accidentally stored/returned HTML
+  const raw = String(md).replace(/<sup class="cite"[^>]*>\d+<\/sup>/g, (m) => {
+    const n = m.match(/\d+/);
+    return n ? `[${n[0]}]` : m;
+  });
+  if (typeof marked !== "undefined" && typeof marked.parse === "function") {
+    try {
+      if (typeof marked.setOptions === "function") {
+        marked.setOptions({ breaks: true, gfm: true });
+      }
+      let html = marked.parse(raw, { breaks: true, gfm: true });
+      html = formatCodeBlocks(html);
+      html = formatCites(html);
+      return html;
+    } catch (_) { /* fallback to custom renderer */ }
+  }
+  const lines = raw.split("\n");
   let html = "";
   let inList = false;
-  for (const raw of lines) {
-    const trimmed = raw.trim();
+  let inCode = false;
+  let codeBuffer = "";
+  let codeLang = "";
+  for (const rawLine of lines) {
+    if (rawLine.trim().startsWith("```")) {
+      if (!inCode) {
+        inCode = true;
+        codeLang = rawLine.trim().slice(3).trim() || "code";
+        codeBuffer = "";
+      } else {
+        inCode = false;
+        html += `<pre><code class="language-${esc(codeLang)}">${esc(codeBuffer.trimEnd())}</code></pre>`;
+      }
+      continue;
+    }
+    if (inCode) {
+      codeBuffer += rawLine + "\n";
+      continue;
+    }
+    const trimmed = rawLine.trim();
     if (!trimmed) {
-      if (inList) { html += "</ul>"; inList = false; }
+      if (inList) { html += `</${inList}>`; inList = false; }
       continue;
     }
     if (/^-{3,}$/.test(trimmed)) {
-      if (inList) { html += "</ul>"; inList = false; }
+      if (inList) { html += `</${inList}>`; inList = false; }
       html += "<hr/>";
       continue;
     }
     const heading = trimmed.match(/^(#{1,4})\s+(.*)$/);
     if (heading) {
-      if (inList) { html += "</ul>"; inList = false; }
-      const level = Math.min(heading[1].length + 2, 6);
+      if (inList) { html += `</${inList}>`; inList = false; }
+      const level = Math.min(heading[1].length + 1, 6);
       html += `<h${level}>${inlineMd(heading[2])}</h${level}>`;
       continue;
     }
-    const listItem = raw.match(/^(\s*)[-*]\s+(.*)$/);
+    const listItem = rawLine.match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
     if (listItem) {
-      if (!inList) { html += "<ul>"; inList = true; }
-      html += `<li>${inlineMd(listItem[2])}</li>`;
+      const isNum = /\d+\./.test(listItem[2]);
+      const tag = isNum ? "ol" : "ul";
+      if (inList && inList !== tag) { html += `</${inList}>`; inList = false; }
+      if (!inList) { html += `<${tag}>`; inList = tag; }
+      html += `<li>${inlineMd(listItem[3])}</li>`;
       continue;
     }
-    if (inList) { html += "</ul>"; inList = false; }
+    if (inList) { html += `</${inList}>`; inList = false; }
+    const blockquote = rawLine.match(/^>\s?(.*)$/);
+    if (blockquote) {
+      html += `<blockquote><p>${inlineMd(blockquote[1])}</p></blockquote>`;
+      continue;
+    }
     html += `<p>${inlineMd(trimmed)}</p>`;
   }
-  if (inList) html += "</ul>";
-  return html;
+  if (inList) html += `</${inList}>`;
+  if (inCode) {
+    html += `<pre><code class="language-${esc(codeLang)}">${esc(codeBuffer.trimEnd())}</code></pre>`;
+  }
+  return formatCodeBlocks(html);
 }
 
 function renderQuiz(items) {
@@ -777,13 +1150,13 @@ function renderStudioResult(tool, res) {
     case "report":
     case "video":
     case "infographic":
-      return `<div class="studio-md">${renderMarkdown(res.markdown)}</div>`;
+      return `<div class="studio-md md-content">${renderMarkdown(res.markdown)}</div>`;
     case "quiz":
       return renderQuiz(res.items || []);
     case "flashcards":
       return renderFlashcards(res.items || []);
     case "mindmap":
-      return `<div class="studio-md">${renderMarkdown(res.markdown)}</div><details class="mermaid-src"><summary>Xem sơ đồ Mermaid</summary><pre>${esc(res.mermaid || "")}</pre></details>`;
+      return `<div class="studio-md md-content">${renderMarkdown(res.markdown)}</div><details class="mermaid-src"><summary>Xem sơ đồ Mermaid</summary><pre>${esc(res.mermaid || "")}</pre></details>`;
     case "audio":
       return renderAudio(res.dialogue || []);
     case "slides":

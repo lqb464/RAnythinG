@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RAnythinG — App</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
   <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body>
@@ -93,10 +93,15 @@
         </div>
         <div class="suggest-bar" id="suggestBar"></div>
         <footer class="panel-ft chat-ft">
-          <textarea id="chatInput" rows="2" placeholder="Hỏi về tài liệu của bạn..."></textarea>
-          <div class="chat-ft-row">
-            <span id="selCount">0 nguồn</span>
-            <button class="btn-send" id="btnSend">Gửi ➡️</button>
+          <div class="chat-composer">
+            <div class="chat-input-wrapper">
+              <div id="chatInputPreview" class="chat-input-preview" aria-hidden="true"></div>
+              <textarea id="chatInput" rows="2" placeholder="Hỏi về tài liệu của bạn…" spellcheck="false"></textarea>
+            </div>
+            <div class="chat-composer-bar">
+              <span id="selCount" class="chat-sel-count">0 nguồn</span>
+              <button type="button" class="btn-send" id="btnSend" title="Gửi (Enter)">Gửi ↑</button>
+            </div>
           </div>
         </footer>
       </section>
@@ -160,6 +165,8 @@
         <p id="noteModalError" class="modal-error hidden"></p>
       </div>
       <footer class="modal-ft">
+        <button type="button" class="btn-ghost hidden" id="noteModalDelete" style="margin-right:auto;color:#f87171;border-color:#ef4444;">🗑️ Xóa</button>
+        <button type="button" class="btn-ghost hidden" id="noteModalToSource" style="color:var(--accent-light);">📥 Thêm vào Sources</button>
         <button type="button" class="btn-ghost" id="noteModalCancel">Hủy</button>
         <button type="button" class="btn-primary" id="noteModalSave">Lưu ghi chú</button>
       </footer>
@@ -181,6 +188,8 @@
     </div>
   </div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

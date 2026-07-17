@@ -65,14 +65,13 @@ def _parse_json_block(text: str) -> Optional[Any]:
     except (json.JSONDecodeError, ValueError):
         return None
 
-_SYSTEM_PROMPT = """Bạn là trợ lý nghiên cứu chuyên nghiệp. Trả lời câu hỏi DỰA TRÊN các đoạn trích từ tài liệu.
+_SYSTEM_PROMPT = """Bạn là trợ lý AI chuyên nghiệp, thông minh và tường tận. Nhiệm vụ của bạn là trả lời câu hỏi và giải thích các khái niệm dựa trên nguồn tài liệu được cung cấp kết hợp với ngữ cảnh hội thoại.
 
 Quy tắc bắt buộc:
-- Chỉ dùng thông tin có trong nguồn trích dẫn [1], [2], ...
-- Gắn [số] sau mỗi ý quan trọng để trích dẫn nguồn
-- Viết tiếng Việt tự nhiên, mạch lạc, có cấu trúc (mở đầu → chi tiết → kết luận nếu phù hợp)
-- Nếu tài liệu không đủ thông tin, nói rõ phần nào chưa có
-- Không bịa đặt, không lặp lại câu hỏi"""
+1. Trích dẫn nguồn: Khi đưa ra các thông tin, số liệu cụ thể, hoặc trích đoạn từ tài liệu, hãy gắn số nguồn [1], [2], ... tương ứng ngay sau ý đó.
+2. Giải thích mạch lạc & thông minh: Nếu người dùng hỏi định nghĩa hoặc làm rõ một thuật ngữ/khái niệm (ví dụ: prompt, OCR, pipeline...) có xuất hiện trong tài liệu hoặc trong mạch hội thoại, hãy GIẢI THÍCH rõ ràng, cặn kẽ ý nghĩa của thuật ngữ đó theo ngữ cảnh tài liệu và kiến thức AI/chuyên ngành một cách trực quan, dễ hiểu nhất (chứ không chỉ trích dẫn thô bảng biểu).
+3. Định dạng văn bản: Trình bày tiếng Việt tự nhiên, súc tích, sử dụng Markdown (tiêu đề, chữ in đậm **...**, danh sách bullet points, hoặc code block/inline code `...` nếu liên quan đến code/tham số kỹ thuật).
+4. Khách quan: Nếu câu hỏi hỏi về thông tin chuyên biệt hoàn toàn không có trong tài liệu và cũng không phải giải thích khái niệm ngữ cảnh, hãy nêu rõ thông tin chưa có trong tài liệu hiện tại."""
 
 
 class AnswerSynthesizer:
@@ -107,52 +106,76 @@ class AnswerSynthesizer:
         self.model.to(device)
         self.model.eval()
 
+    def reformulate_query(self, query: str, history: Optional[Sequence[dict]]) -> str:
+        if not history or len(history) == 0:
+            return query
+        last_turn = history[-1]
+        last_q = str(last_turn.get("query", "")).strip()
+        last_a = str(last_turn.get("answer", "")).strip()[:200]
+        if not last_q:
+            return query
+
+        if self.use_api and self.client:
+            try:
+                prompt = (
+                    f"Lịch sử hội thoại gần đây:\nNgười dùng: {last_q}\nTrợ lý: {last_a}\n\n"
+                    f"Câu hỏi tiếp theo của người dùng: {query}\n\n"
+                    "Nhiệm vụ: Hãy viết lại 'Câu hỏi tiếp theo' thành một câu hỏi đầy đủ, độc lập (standalone question) rõ ràng bằng tiếng Việt, bao hàm cả ngữ cảnh từ lịch sử nếu cần, để tìm kiếm trong tài liệu. Chỉ trả về đúng câu hỏi được viết lại, không giải thích gì thêm."
+                )
+                res = self.client.chat.completions.create(
+                    model=self.gemini_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=80,
+                    temperature=0.1,
+                )
+                reformulated = res.choices[0].message.content.strip().strip('"')
+                if reformulated and len(reformulated) > 5:
+                    logger.info(f"Reformulated query: '{query}' -> '{reformulated}'")
+                    return reformulated
+            except Exception as e:
+                logger.warning(f"Failed to reformulate query: {e}")
+
+        # Heuristic fallback for short follow-up questions
+        if len(query.split()) <= 8 and len(last_q) > 3:
+            return f"{query} (ngữ cảnh: {last_q})"
+        return query
+
     def _build_context(self, chunks: Sequence[Tuple[str, str]]) -> str:
         parts: List[str] = []
         for idx, (source, text) in enumerate(chunks, start=1):
             parts.append(f"[{idx}] ({source})\n{text}")
         return "\n\n".join(parts)
 
-    @staticmethod
-    def _build_history_block(history: Optional[Sequence[dict]]) -> str:
-        if not history:
-            return ""
-        turns = []
-        for turn in history[-3:]:
-            q = str(turn.get("query", "")).strip()
-            a = str(turn.get("answer", "")).strip()
-            if q and a:
-                turns.append(f"Người dùng: {q}\nTrợ lý: {a}")
-        if not turns:
-            return ""
-        return "## Lịch sử hội thoại gần đây\n" + "\n\n".join(turns) + "\n\n"
-
-    def _build_answer_prompt(
+    def _build_api_messages(
         self,
         query: str,
         chunks: Sequence[Tuple[str, str]],
         brief: bool,
         extra_context: str,
         history: Optional[Sequence[dict]],
-    ) -> str:
+    ) -> List[dict]:
+        messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
+        if history:
+            for turn in history[-4:]:
+                q = str(turn.get("query", "")).strip()
+                a = str(turn.get("answer", "")).strip()
+                if q and a:
+                    messages.append({"role": "user", "content": q})
+                    messages.append({"role": "assistant", "content": a})
+
         context = self._build_context(chunks)
-        style = "Trả lời ngắn gọn, 2-4 câu." if brief else "Trả lời đầy đủ, chi tiết nhưng súc tích."
-        global_block = ""
-        if extra_context.strip():
-            global_block = f"## Bối cảnh tổng quan (Graph RAG)\n{extra_context.strip()}\n\n"
-        history_block = self._build_history_block(history)
-        user_prompt = (
-            f"{style}\n\n"
-            f"{history_block}"
+        style = "Trả lời ngắn gọn, súc tích (2-4 câu)." if brief else "Trả lời rõ ràng, chi tiết, phân tích đầy đủ ý nghĩa và bối cảnh."
+        global_block = f"## Bối cảnh tổng quan (Graph RAG)\n{extra_context.strip()}\n\n" if extra_context.strip() else ""
+
+        current_prompt = (
+            f"## Nguồn tài liệu được cung cấp\n{context}\n\n"
             f"{global_block}"
-            f"## Nguồn tài liệu\n{context}\n\n"
-            f"## Câu hỏi\n{query}\n\n"
-            "## Trả lời"
+            f"## Yêu cầu/Câu hỏi của người dùng\n{query}\n\n"
+            f"## Chỉ dẫn trả lời\n{style}\n"
+            "Hãy tổng hợp và trả lời câu hỏi trên bằng tiếng Việt mạch lạc, đầy đủ ý, cấu trúc rõ ràng (sử dụng Markdown, bullet points nếu phù hợp), tuyệt đối không dừng đột ngột giữa chừng."
         )
-        return [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ]
+        messages.append({"role": "user", "content": current_prompt})
+        return messages
 
     def _build_answer_prompt(
         self,
@@ -163,11 +186,21 @@ class AnswerSynthesizer:
         history: Optional[Sequence[dict]],
     ) -> str:
         messages = self._build_api_messages(query, chunks, brief, extra_context, history)
-        return self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
+        if self.tokenizer is not None and hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template:
+            try:
+                return self.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                pass
+        out = f"SYSTEM: {_SYSTEM_PROMPT}\n\n"
+        for m in messages[1:]:
+            role = "USER" if m["role"] == "user" else "ASSISTANT"
+            out += f"{role}: {m['content']}\n\n"
+        out += "ASSISTANT: "
+        return out
 
     def synthesize(
         self,
@@ -183,7 +216,7 @@ class AnswerSynthesizer:
                 response = self.client.chat.completions.create(
                     model=self.gemini_model,
                     messages=messages,
-                    max_tokens=MAX_NEW_TOKENS if not brief else 180,
+                    max_tokens=MAX_NEW_TOKENS if not brief else 512,
                     temperature=GENERATION_TEMPERATURE,
                 )
                 answer = response.choices[0].message.content.strip()
@@ -203,7 +236,7 @@ class AnswerSynthesizer:
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
-                max_new_tokens=MAX_NEW_TOKENS if not brief else 180,
+                max_new_tokens=MAX_NEW_TOKENS if not brief else 512,
                 temperature=GENERATION_TEMPERATURE,
                 do_sample=GENERATION_TEMPERATURE > 0,
                 top_p=0.9,
@@ -230,12 +263,17 @@ class AnswerSynthesizer:
                 response = self.client.chat.completions.create(
                     model=self.gemini_model,
                     messages=messages,
-                    max_tokens=MAX_NEW_TOKENS if not brief else 180,
+                    max_tokens=MAX_NEW_TOKENS if not brief else 512,
                     temperature=GENERATION_TEMPERATURE,
                     stream=True,
                 )
                 for chunk in response:
-                    content = chunk.choices[0].delta.content
+                    if not chunk or not hasattr(chunk, "choices") or not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    if not choice or not hasattr(choice, "delta") or not choice.delta:
+                        continue
+                    content = getattr(choice.delta, "content", None)
                     if content:
                         yield content
                 return
@@ -258,7 +296,7 @@ class AnswerSynthesizer:
         streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)
         generation_kwargs = dict(
             **inputs,
-            max_new_tokens=MAX_NEW_TOKENS if not brief else 180,
+            max_new_tokens=MAX_NEW_TOKENS if not brief else 512,
             temperature=GENERATION_TEMPERATURE,
             do_sample=GENERATION_TEMPERATURE > 0,
             top_p=0.9,

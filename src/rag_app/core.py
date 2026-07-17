@@ -250,7 +250,8 @@ class RagAgent:
         allowed_sources: Optional[List[str]] = None,
         history: Optional[List[Dict[str, str]]] = None,
     ) -> Tuple[str, List[DocumentChunk]]:
-        relevant = self.retrieve(query, top_k=top_k, allowed_sources=allowed_sources)
+        search_query = self.synthesizer.reformulate_query(query, history) if history else query
+        relevant = self.retrieve(search_query, top_k=top_k, allowed_sources=allowed_sources)
         if not relevant:
             return "Không có thông tin phù hợp trong các nguồn được chọn để trả lời.", []
 
@@ -287,7 +288,8 @@ class RagAgent:
                 {"type": "replace", "answer": "..."}  (LLM output rejected, extractive fallback used)
                 {"type": "done", "answer": "..."}
         """
-        relevant = self.retrieve(query, top_k=top_k, allowed_sources=allowed_sources)
+        search_query = self.synthesizer.reformulate_query(query, history) if history else query
+        relevant = self.retrieve(search_query, top_k=top_k, allowed_sources=allowed_sources)
         if not relevant:
             fallback = "Không có thông tin phù hợp trong các nguồn được chọn để trả lời."
             yield {"type": "sources", "sources": []}
@@ -327,7 +329,7 @@ class RagAgent:
 
     @staticmethod
     def _is_valid_answer(text: str) -> bool:
-        if not text or len(text.strip()) < 20:
+        if not text or len(text.strip()) < 25:
             return False
         lower = text.lower()
         bad_patterns = [
@@ -338,6 +340,9 @@ class RagAgent:
             "tôi không có thông tin",
         ]
         if any(pat in lower for pat in bad_patterns) and len(text) < 80:
+            return False
+        stripped = text.strip()
+        if len(stripped) < 120 and not stripped[-1] in (".", "!", "?", ":", "\n", "`", "*", "]"):
             return False
         return True
 

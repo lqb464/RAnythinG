@@ -26,7 +26,7 @@ RRF_K = 60
 MAX_QUERY_VARIANTS = 3
 
 # Generation
-MAX_NEW_TOKENS = 512
+MAX_NEW_TOKENS = 2048
 GENERATION_TEMPERATURE = 0.3
 
 # Graph RAG — set ENABLE_GRAPH_RAG=False to skip KG building during indexing
