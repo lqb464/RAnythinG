@@ -529,6 +529,7 @@ class ExternalRetrieveRequest(BaseModel):
     project_id: str
     query: str
     top_k: Optional[int] = 4
+    allowed_sources: Optional[List[str]] = None
 
 
 class ExternalQueryRequest(BaseModel):
@@ -537,6 +538,75 @@ class ExternalQueryRequest(BaseModel):
     top_k: Optional[int] = 4
     brief: Optional[bool] = False
     history: Optional[List[dict]] = None
+    sources: Optional[List[str]] = None
+
+
+class ExternalProjectCreate(BaseModel):
+    project_id: str
+    name: Optional[str] = None
+
+
+class ExternalStudioRequest(BaseModel):
+    project_id: str
+    sources: Optional[List[str]] = None
+
+
+@app.post("/api/external/projects")
+async def external_create_project(body: ExternalProjectCreate):
+    project_id = (body.project_id or "").strip()
+    if not project_id:
+        raise HTTPException(400, "project_id không được trống")
+    name = (body.name or f"Project {project_id}").strip()
+    existing = store.get_notebook(project_id)
+    if existing:
+        agent = await agent_cache.async_get_agent(project_id)
+        return {
+            "ok": True,
+            "created": False,
+            "project_id": project_id,
+            "name": existing.get("name", name),
+            "sources": store.list_source_files(project_id),
+            "stats": agent.get_stats() if len(agent.chunks) > 0 else {"documents": 0, "chunks": 0},
+        }
+    meta = store.create_notebook(name, notebook_id=project_id)
+    return {
+        "ok": True,
+        "created": True,
+        "project_id": project_id,
+        "name": meta.get("name", name),
+        "sources": [],
+        "stats": {"documents": 0, "chunks": 0},
+    }
+
+
+@app.get("/api/external/projects/{project_id}")
+async def external_get_project(project_id: str):
+    project_id = project_id.strip()
+    if not project_id:
+        raise HTTPException(400, "project_id không được trống")
+    meta = store.get_notebook(project_id)
+    if not meta:
+        raise HTTPException(404, "Project không tồn tại")
+    agent = await agent_cache.async_get_agent(project_id)
+    sources = store.list_source_files(project_id)
+    return {
+        "ok": True,
+        "project_id": project_id,
+        "name": meta.get("name", project_id),
+        "sources": sources,
+        "stats": agent.get_stats() if len(agent.chunks) > 0 else {"documents": 0, "chunks": 0},
+        "indexed": len(agent.chunks) > 0,
+    }
+
+
+@app.get("/api/external/projects/{project_id}/sources")
+async def external_list_sources(project_id: str):
+    project_id = project_id.strip()
+    if not project_id:
+        raise HTTPException(400, "project_id không được trống")
+    if not store.get_notebook(project_id):
+        raise HTTPException(404, "Project không tồn tại")
+    return {"ok": True, "project_id": project_id, "sources": store.list_source_files(project_id)}
 
 
 @app.post("/api/external/upload")
@@ -600,7 +670,8 @@ async def external_retrieve(body: ExternalRetrieveRequest):
         raise HTTPException(400, "query không được trống")
         
     top_k = body.top_k or 4
-    chunks = agent.retrieve(query, top_k=top_k)
+    allowed = body.allowed_sources or None
+    chunks = agent.retrieve(query, top_k=top_k, allowed_sources=allowed)
     return {
         "chunks": [
             {
@@ -631,8 +702,11 @@ async def external_query(body: ExternalQueryRequest):
     top_k = body.top_k or 4
     brief = body.brief or False
     history = body.history or []
+    allowed = body.sources or None
     
-    answer, chunks = agent.answer(query, top_k=top_k, brief=brief, history=history)
+    answer, chunks = agent.answer(
+        query, top_k=top_k, brief=brief, history=history, allowed_sources=allowed
+    )
     return {
         "answer": answer,
         "answer_html": _format_answer_html(answer),
@@ -643,6 +717,44 @@ async def external_query(body: ExternalQueryRequest):
             }
             for c in chunks
         ]
+    }
+
+
+@app.post("/api/external/summarize")
+async def external_summarize(body: ExternalStudioRequest):
+    project_id = body.project_id.strip()
+    if not project_id:
+        raise HTTPException(400, "project_id không được trống")
+    if not store.get_notebook(project_id):
+        raise HTTPException(404, "Project không tồn tại")
+    agent = await agent_cache.async_get_agent(project_id)
+    if len(agent.chunks) == 0:
+        raise HTTPException(400, "Chưa có tài liệu nào trong project này")
+    allowed = body.sources or None
+    markdown = agent.summarize_documents(allowed_sources=allowed)
+    return {
+        "ok": True,
+        "markdown": markdown,
+        "sources": allowed or store.list_source_files(project_id),
+    }
+
+
+@app.post("/api/external/report")
+async def external_report(body: ExternalStudioRequest):
+    project_id = body.project_id.strip()
+    if not project_id:
+        raise HTTPException(400, "project_id không được trống")
+    if not store.get_notebook(project_id):
+        raise HTTPException(404, "Project không tồn tại")
+    agent = await agent_cache.async_get_agent(project_id)
+    if len(agent.chunks) == 0:
+        raise HTTPException(400, "Chưa có tài liệu nào trong project này")
+    allowed = body.sources or None
+    markdown = agent.generate_reports(allowed_sources=allowed)
+    return {
+        "ok": True,
+        "markdown": markdown,
+        "sources": allowed or store.list_source_files(project_id),
     }
 
 
