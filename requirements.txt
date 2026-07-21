@@ -20,3 +20,5 @@ docling
 networkx
 openai
 httpx
+PyJWT
+bcrypt

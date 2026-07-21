@@ -1,5 +1,7 @@
 """RAG pipeline model and retrieval configuration."""
 
+import os
+
 # Embedding: multilingual dense retrieval
 EMBEDDING_MODEL_NAME = "intfloat/multilingual-e5-small"
 # Prefix required by E5 models ("query: " / "passage: "); set to "" for BGE/other models
@@ -29,11 +31,22 @@ MAX_QUERY_VARIANTS = 3
 MAX_NEW_TOKENS = 2048
 GENERATION_TEMPERATURE = 0.3
 
-# Graph RAG — set ENABLE_GRAPH_RAG=False to skip KG building during indexing
+# Graph RAG — set ENABLE_GRAPH_RAG=true in env to build KG during indexing.
+# UI can still build on-demand via /api/notebooks/{id}/graph/build.
 ENABLE_GRAPH_RAG = False
 GRAPH_MAX_EXPANDED = 24
 GRAPH_MIN_SHARED_TERMS = 2
 GRAPH_GLOBAL_TOP_COMMUNITIES = 3
+GRAPH_UI_MAX_NODES = 60
+
+
+def graph_rag_enabled() -> bool:
+    """Runtime flag (env overrides module default)."""
+    env = os.getenv("ENABLE_GRAPH_RAG")
+    if env is None:
+        return bool(ENABLE_GRAPH_RAG)
+    return env.strip().lower() in ("1", "true", "yes", "on")
+
 
 # Document parsing (set RAG_USE_DOCLING=0 to disable Docling)
 USE_DOCLING_DEFAULT = True

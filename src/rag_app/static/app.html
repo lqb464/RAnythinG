@@ -9,12 +9,48 @@
   <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body>
+  <div id="authOverlay" class="auth-overlay hidden">
+    <form id="authForm" class="auth-card" data-mode="login">
+      <h2 id="authTitle">Đăng nhập</h2>
+      <p class="auth-sub">RAnythinG · notebook riêng tư theo tài khoản</p>
+      <label>Email<input id="authEmail" type="email" required autocomplete="username" /></label>
+      <label>Mật khẩu<input id="authPassword" type="password" required minlength="6" autocomplete="current-password" /></label>
+      <button type="submit" class="btn-primary" id="authSubmit">Đăng nhập</button>
+      <a href="#" id="authToggleMode">Chưa có tài khoản? Đăng ký</a>
+    </form>
+  </div>
+
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-card settings-card">
+      <h3>Cài đặt LLM</h3>
+      <label>Provider
+        <select id="settingsProvider">
+          <option value="gemini">Gemini</option>
+          <option value="openai_compat">OpenAI-compatible</option>
+          <option value="ollama">Ollama (local)</option>
+          <option value="vllm">vLLM (local)</option>
+        </select>
+      </label>
+      <label>Model<input id="settingsModel" type="text" placeholder="gemini-2.5-flash / llama3.2" /></label>
+      <label>OpenAI base URL<input id="settingsBaseUrl" type="text" placeholder="http://127.0.0.1:11434/v1" /></label>
+      <label class="chk"><input type="checkbox" id="settingsGraphRag" /> Bật GraphRAG (chậm hơn khi index)</label>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="settingsClose">Đóng</button>
+        <button type="button" class="btn-primary" id="settingsSave">Lưu</button>
+      </div>
+    </div>
+  </div>
+
   <!-- HOME -->
   <div id="view-home" class="view active">
     <header class="home-nav">
       <a href="/" class="home-nav-brand" title="Về trang chủ sản phẩm">RAnythinG</a>
       <span class="home-nav-tag">App · Local RAG</span>
-      <a href="/" class="home-nav-link">← Trang sản phẩm</a>
+      <span id="authUserLabel" class="home-nav-user"></span>
+      <button type="button" class="home-nav-link btn-ghost" id="btnSettings">Settings</button>
+      <button type="button" class="home-nav-link btn-ghost" id="btnImportNb">Import</button>
+      <input type="file" id="importInput" accept=".zip,application/zip" hidden />
+      <button type="button" class="home-nav-link btn-ghost" id="btnLogout">Đăng xuất</button>
     </header>
 
     <div class="home-shell">
@@ -53,6 +89,7 @@
       <button class="btn-ghost" id="btnHome">← Notebook</button>
       <a href="/" class="ws-brand" title="Trang sản phẩm">RAnythinG</a>
       <input class="ws-title" id="nbTitle" placeholder="Tên notebook" />
+      <button type="button" class="btn-ghost" id="btnExportNb" title="Export ZIP">Export</button>
       <span class="ws-status" id="wsStatus"><span class="dot"></span><span id="statusText">—</span></span>
     </header>
 

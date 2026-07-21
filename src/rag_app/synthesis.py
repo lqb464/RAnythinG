@@ -74,21 +74,137 @@ Quy tắc bắt buộc:
 4. Khách quan: Nếu câu hỏi hỏi về thông tin chuyên biệt hoàn toàn không có trong tài liệu và cũng không phải giải thích khái niệm ngữ cảnh, hãy nêu rõ thông tin chưa có trong tài liệu hiện tại."""
 
 
+def _collect_gemini_keys() -> List[str]:
+    keys: List[str] = []
+    primary = (os.getenv("GEMINI_API_KEY") or "").strip()
+    if primary:
+        keys.append(primary)
+    multi = (os.getenv("GEMINI_API_KEYS") or "").strip()
+    if multi:
+        for part in multi.split(","):
+            k = part.strip()
+            if k and k not in keys:
+                keys.append(k)
+    for i in range(1, 5):
+        k = (os.getenv(f"GEMINI_API_KEY_{i}") or "").strip()
+        if k and k not in keys:
+            keys.append(k)
+    return keys
+
+
+def reload_synthesizer_config(
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    openai_base_url: Optional[str] = None,
+) -> "AnswerSynthesizer":
+    """Rebuild synthesizer client with optional runtime overrides."""
+    global _SYNTHESIZER
+    if provider:
+        os.environ["LLM_PROVIDER"] = provider.strip().lower()
+    if model:
+        os.environ["LLM_MODEL"] = model.strip()
+    if openai_base_url is not None:
+        os.environ["OPENAI_BASE_URL"] = openai_base_url.strip()
+    _SYNTHESIZER = AnswerSynthesizer()
+    return _SYNTHESIZER
+
+
 class AnswerSynthesizer:
     def __init__(self) -> None:
         self.tokenizer: Optional[AutoTokenizer] = None
         self.model: Optional[AutoModelForCausalLM] = None
-        self.gemini_api_key = os.getenv("GEMINI_API_KEY")
-        self.gemini_base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
-        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-        self.use_api = bool(self.gemini_api_key)
+
+        self.gemini_keys = _collect_gemini_keys()
+        self._key_index = 0
+        self.gemini_api_key = self.gemini_keys[0] if self.gemini_keys else ""
+        self.gemini_key_count = len(self.gemini_keys)
+
+        provider = (os.getenv("LLM_PROVIDER") or "").strip().lower()
+        openai_key = (os.getenv("OPENAI_API_KEY") or "ollama").strip()
+        openai_base = (os.getenv("OPENAI_BASE_URL") or "").strip()
+        env_model = (os.getenv("LLM_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash").strip()
+
+        gemini_base = os.getenv(
+            "GEMINI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+
         self.client = None
-        if self.use_api:
-            from openai import OpenAI
-            self.client = OpenAI(
-                api_key=self.gemini_api_key,
-                base_url=self.gemini_base_url,
+        self.use_api = False
+        self.provider_name = "local"
+        self.active_model = GENERATION_MODEL_NAME
+        self.api_base_url = ""
+        self.gemini_model = env_model
+
+        if provider in ("openai", "openai_compat", "openai-compatible", "ollama", "vllm", "local"):
+            # OpenAI-compatible (cloud or local Ollama/vLLM)
+            base = openai_base or (
+                "http://127.0.0.1:11434/v1" if provider in ("ollama", "local") else "https://api.openai.com/v1"
             )
+            if provider == "vllm" and not openai_base:
+                base = "http://127.0.0.1:8000/v1"
+            from openai import OpenAI
+
+            self.client = OpenAI(api_key=openai_key or "local", base_url=base)
+            self.use_api = True
+            self.provider_name = "openai_compat" if provider not in ("ollama", "vllm", "local") else provider
+            self.active_model = env_model if env_model != "gemini-2.5-flash" else (
+                os.getenv("OLLAMA_MODEL") or os.getenv("VLLM_MODEL") or "llama3.2"
+            )
+            self.gemini_model = self.active_model
+            self.api_base_url = base
+        elif self.gemini_keys or provider == "gemini":
+            from openai import OpenAI
+
+            self.client = OpenAI(api_key=self.gemini_api_key or "missing", base_url=gemini_base)
+            self.use_api = bool(self.gemini_keys)
+            self.provider_name = "gemini"
+            self.active_model = env_model
+            self.gemini_model = env_model
+            self.api_base_url = gemini_base
+        else:
+            self.provider_name = "local"
+            self.active_model = GENERATION_MODEL_NAME
+
+    def _rotate_gemini_client(self) -> bool:
+        if len(self.gemini_keys) < 2 or self.provider_name != "gemini":
+            return False
+        self._key_index = (self._key_index + 1) % len(self.gemini_keys)
+        key = self.gemini_keys[self._key_index]
+        self.gemini_api_key = key
+        from openai import OpenAI
+
+        self.client = OpenAI(api_key=key, base_url=self.api_base_url or os.getenv(
+            "GEMINI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        ))
+        logger.info("Rotated Gemini API key (index=%s)", self._key_index)
+        return True
+
+    def _api_chat(self, *, messages: list, max_tokens: int, temperature: float):
+        """Call OpenAI-compatible chat with Gemini key rotation on 429/quota."""
+        last_err: Optional[Exception] = None
+        attempts = max(1, len(self.gemini_keys) if self.provider_name == "gemini" else 1)
+        for _ in range(attempts):
+            try:
+                return self.client.chat.completions.create(
+                    model=self.gemini_model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            except Exception as e:
+                last_err = e
+                msg = str(e).lower()
+                if self.provider_name == "gemini" and any(
+                    x in msg for x in ("429", "quota", "rate", "resource_exhausted")
+                ):
+                    if self._rotate_gemini_client():
+                        continue
+                raise
+        if last_err:
+            raise last_err
+        raise RuntimeError("API chat failed")
 
     def load(self) -> None:
         if self.use_api:
@@ -122,8 +238,7 @@ class AnswerSynthesizer:
                     f"Câu hỏi tiếp theo của người dùng: {query}\n\n"
                     "Nhiệm vụ: Hãy viết lại 'Câu hỏi tiếp theo' thành một câu hỏi đầy đủ, độc lập (standalone question) rõ ràng bằng tiếng Việt, bao hàm cả ngữ cảnh từ lịch sử nếu cần, để tìm kiếm trong tài liệu. Chỉ trả về đúng câu hỏi được viết lại, không giải thích gì thêm."
                 )
-                res = self.client.chat.completions.create(
-                    model=self.gemini_model,
+                res = self._api_chat(
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=80,
                     temperature=0.1,
@@ -213,8 +328,7 @@ class AnswerSynthesizer:
         if self.use_api:
             messages = self._build_api_messages(query, chunks, brief, extra_context, history)
             try:
-                response = self.client.chat.completions.create(
-                    model=self.gemini_model,
+                response = self._api_chat(
                     messages=messages,
                     max_tokens=MAX_NEW_TOKENS if not brief else 512,
                     temperature=GENERATION_TEMPERATURE,
@@ -222,7 +336,7 @@ class AnswerSynthesizer:
                 answer = response.choices[0].message.content.strip()
                 return self._clean_answer(answer)
             except Exception as e:
-                logger.error(f"Error calling Gemini API in synthesize: {e}")
+                logger.error(f"Error calling LLM API in synthesize: {e}")
                 if not (self.model and self.tokenizer):
                     raise e
 
@@ -278,7 +392,32 @@ class AnswerSynthesizer:
                         yield content
                 return
             except Exception as e:
-                logger.error(f"Error calling Gemini API stream in synthesize_stream: {e}")
+                msg = str(e).lower()
+                if self.provider_name == "gemini" and any(
+                    x in msg for x in ("429", "quota", "rate", "resource_exhausted")
+                ):
+                    if self._rotate_gemini_client():
+                        try:
+                            response = self.client.chat.completions.create(
+                                model=self.gemini_model,
+                                messages=messages,
+                                max_tokens=MAX_NEW_TOKENS if not brief else 512,
+                                temperature=GENERATION_TEMPERATURE,
+                                stream=True,
+                            )
+                            for chunk in response:
+                                if not chunk or not hasattr(chunk, "choices") or not chunk.choices:
+                                    continue
+                                choice = chunk.choices[0]
+                                if not choice or not hasattr(choice, "delta") or not choice.delta:
+                                    continue
+                                content = getattr(choice.delta, "content", None)
+                                if content:
+                                    yield content
+                            return
+                        except Exception as e2:
+                            e = e2
+                logger.error(f"Error calling LLM API stream in synthesize_stream: {e}")
                 if not (self.model and self.tokenizer):
                     raise e
 
@@ -335,8 +474,7 @@ class AnswerSynthesizer:
     def _generate(self, system: str, user: str, max_new_tokens: int = 320) -> str:
         if self.use_api:
             try:
-                response = self.client.chat.completions.create(
-                    model=self.gemini_model,
+                response = self._api_chat(
                     messages=[
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
@@ -346,7 +484,7 @@ class AnswerSynthesizer:
                 )
                 return response.choices[0].message.content.strip()
             except Exception as e:
-                logger.error(f"Error calling Gemini API in _generate: {e}")
+                logger.error(f"Error calling LLM API in _generate: {e}")
                 if not (self.model and self.tokenizer):
                     raise e
 

@@ -27,4 +27,5 @@ jobs:
           HF_HUB_OFFLINE: "1"
           TRANSFORMERS_OFFLINE: "1"
         run: |
-          python -m pytest --maxfail=1 --disable-warnings -q
+          python -m pytest tests/test_retrieval_unit.py tests/test_rag_eval_smoke.py tests/test_studio_persist.py -q --maxfail=1 --disable-warnings
+          python -m pytest tests/test_auth_and_external.py -q --maxfail=1 --disable-warnings

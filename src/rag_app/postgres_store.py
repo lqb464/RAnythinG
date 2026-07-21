@@ -12,6 +12,7 @@ from .database import (
     NoteRow,
     SessionLocal,
     SourceRow,
+    StudioOutputRow,
 )
 from .parsers import parse_upload_file
 
@@ -50,31 +51,46 @@ def _row_to_meta(row: NotebookRow, source_count: int = 0) -> dict:
     }
 
 
-def list_notebooks() -> List[dict]:
+def list_notebooks(owner_id: Optional[str] = None) -> List[dict]:
     with SessionLocal() as db:
-        rows = db.query(NotebookRow).order_by(NotebookRow.updated_at.desc()).all()
+        q = db.query(NotebookRow)
+        if owner_id is not None:
+            q = q.filter(NotebookRow.owner_id == owner_id)
+        rows = q.order_by(NotebookRow.updated_at.desc()).all()
         result = []
         for row in rows:
             count = db.query(SourceRow).filter(SourceRow.notebook_id == row.id).count()
-            result.append(_row_to_meta(row, count))
+            meta = _row_to_meta(row, count)
+            meta["owner_id"] = row.owner_id
+            result.append(meta)
         return result
 
 
-def create_notebook(name: str = "Notebook mới", notebook_id: Optional[str] = None) -> dict:
+def create_notebook(
+    name: str = "Notebook mới",
+    notebook_id: Optional[str] = None,
+    owner_id: Optional[str] = None,
+) -> dict:
     nb_id = notebook_id or str(uuid.uuid4())[:8]
     now = _now()
     row = NotebookRow(
         id=nb_id,
         name=name.strip() or "Notebook mới",
+        owner_id=owner_id,
         created_at=now,
         updated_at=now,
     )
     with SessionLocal() as db:
-        if db.get(NotebookRow, nb_id):
-            return _row_to_meta(row, 0)
+        existing = db.get(NotebookRow, nb_id)
+        if existing:
+            meta = _row_to_meta(existing, 0)
+            meta["owner_id"] = existing.owner_id
+            return meta
         db.add(row)
         db.commit()
-        return _row_to_meta(row, 0)
+        meta = _row_to_meta(row, 0)
+        meta["owner_id"] = owner_id
+        return meta
 
 
 def get_notebook(notebook_id: str) -> Optional[dict]:
@@ -83,7 +99,9 @@ def get_notebook(notebook_id: str) -> Optional[dict]:
         if not row:
             return None
         count = db.query(SourceRow).filter(SourceRow.notebook_id == notebook_id).count()
-        return _row_to_meta(row, count)
+        meta = _row_to_meta(row, count)
+        meta["owner_id"] = row.owner_id
+        return meta
 
 
 def update_notebook_name(notebook_id: str, name: str) -> None:
@@ -328,4 +346,92 @@ def load_index(notebook_id: str, agent: RagAgent) -> bool:
         return len(agent.chunks) > 0 and agent.bm25 is not None
     except Exception:
         return build_and_save_index(notebook_id, agent)
-        return build_and_save_index(notebook_id, agent)
+
+
+def load_studio_outputs(notebook_id: str) -> List[dict]:
+    with SessionLocal() as db:
+        rows = (
+            db.query(StudioOutputRow)
+            .filter(StudioOutputRow.notebook_id == notebook_id)
+            .order_by(StudioOutputRow.created_at.desc())
+            .all()
+        )
+        out: List[dict] = []
+        for r in rows:
+            try:
+                sources = json.loads(r.sources_json or "[]")
+            except json.JSONDecodeError:
+                sources = []
+            try:
+                result = json.loads(r.result_json or "{}")
+            except json.JSONDecodeError:
+                result = {}
+            out.append(
+                {
+                    "id": r.id,
+                    "tool": r.tool,
+                    "label": r.label,
+                    "sources": sources,
+                    "source_count": len(sources) if isinstance(sources, list) else 0,
+                    "created_at": r.created_at.isoformat(timespec="seconds"),
+                    "result": result,
+                }
+            )
+        return out
+
+
+def save_studio_output(
+    notebook_id: str,
+    tool: str,
+    label: str,
+    sources: List[str],
+    result: dict,
+) -> dict:
+    entry_id = str(uuid.uuid4())
+    now = _now()
+    sources = list(sources or [])
+    with SessionLocal() as db:
+        db.add(
+            StudioOutputRow(
+                id=entry_id,
+                notebook_id=notebook_id,
+                tool=tool,
+                label=label or tool,
+                sources_json=json.dumps(sources, ensure_ascii=False),
+                result_json=json.dumps(result or {}, ensure_ascii=False),
+                created_at=now,
+            )
+        )
+        row = db.get(NotebookRow, notebook_id)
+        if row:
+            row.updated_at = now
+        db.commit()
+    return {
+        "id": entry_id,
+        "tool": tool,
+        "label": label or tool,
+        "sources": sources,
+        "source_count": len(sources),
+        "created_at": now.isoformat(timespec="seconds"),
+        "result": result or {},
+    }
+
+
+def delete_studio_output(notebook_id: str, output_id: str) -> bool:
+    with SessionLocal() as db:
+        row = (
+            db.query(StudioOutputRow)
+            .filter(
+                StudioOutputRow.notebook_id == notebook_id,
+                StudioOutputRow.id == output_id,
+            )
+            .first()
+        )
+        if not row:
+            return False
+        db.delete(row)
+        nb = db.get(NotebookRow, notebook_id)
+        if nb:
+            nb.updated_at = _now()
+        db.commit()
+        return True

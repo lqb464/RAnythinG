@@ -4,18 +4,71 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 let notebookId = null;
 let selectedSources = new Set();
 let indexed = false;
+let authToken = localStorage.getItem("rananything_token") || "";
+let authUser = null;
+
+function authHeaders(extra = {}) {
+  const h = { ...extra };
+  if (authToken) h["Authorization"] = `Bearer ${authToken}`;
+  return h;
+}
 
 async function api(path, opts = {}) {
+  const headers = authHeaders(
+    opts.body && !(opts.body instanceof FormData) ? { "Content-Type": "application/json" } : {}
+  );
   const res = await fetch(path, {
-    headers: opts.body && !(opts.body instanceof FormData) ? { "Content-Type": "application/json" } : {},
     ...opts,
+    headers: { ...headers, ...(opts.headers || {}) },
     body: opts.body instanceof FormData || typeof opts.body === "string" ? opts.body : opts.body ? JSON.stringify(opts.body) : undefined,
   });
+  if (res.status === 401) {
+    clearAuth();
+    showAuth(true);
+    throw new Error("Cần đăng nhập");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Lỗi API");
+    const detail = err.detail;
+    throw new Error(typeof detail === "string" ? detail : (detail && JSON.stringify(detail)) || "Lỗi API");
+  }
+  if (res.headers.get("content-type")?.includes("application/zip")) {
+    return res.blob();
   }
   return res.json();
+}
+
+function clearAuth() {
+  authToken = "";
+  authUser = null;
+  localStorage.removeItem("rananything_token");
+  localStorage.removeItem("rananything_refresh");
+}
+
+function showAuth(show) {
+  $("#authOverlay")?.classList.toggle("hidden", !show);
+}
+
+async function ensureAuth() {
+  const health = await fetch("/api/health").then((r) => r.json()).catch(() => ({ auth_required: true }));
+  if (!health.auth_required) {
+    showAuth(false);
+    return true;
+  }
+  if (!authToken) {
+    showAuth(true);
+    return false;
+  }
+  try {
+    authUser = await api("/api/auth/me");
+    $("#authUserLabel") && ($("#authUserLabel").textContent = authUser.email || "");
+    showAuth(false);
+    return true;
+  } catch {
+    clearAuth();
+    showAuth(true);
+    return false;
+  }
 }
 
 function toast(msg) {
@@ -295,7 +348,11 @@ async function uploadFiles(files) {
   try {
     const fd = new FormData();
     [...files].forEach((f) => fd.append("files", f));
-    const res = await fetch(`/api/notebooks/${notebookId}/upload`, { method: "POST", body: fd });
+    const res = await fetch(`/api/notebooks/${notebookId}/upload`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: fd,
+    });
     if (!res.ok) throw new Error((await res.json()).detail);
     const data = await res.json();
     data.added.forEach((s) => selectedSources.add(s));
@@ -543,7 +600,7 @@ async function sendChat(query) {
   try {
     const res = await fetch(`/api/notebooks/${notebookId}/chat/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ query, sources: [...selectedSources] }),
     });
     if (!res.ok || !res.body) {
@@ -1266,8 +1323,11 @@ function escAttr(s) {
   return s.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-/* Init — restore notebook from URL hash on page load */
-if ($("#notebookGrid")) {
+/* Init — auth then restore notebook from URL hash */
+async function bootApp() {
+  if (!$("#notebookGrid")) return;
+  const ok = await ensureAuth();
+  if (!ok) return;
   const initId = location.hash.slice(1);
   if (initId) {
     openNotebook(initId).catch(() => {
@@ -1278,3 +1338,119 @@ if ($("#notebookGrid")) {
     loadNotebooks();
   }
 }
+
+$("#authForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = $("#authEmail").value.trim();
+  const password = $("#authPassword").value;
+  const mode = $("#authForm").dataset.mode || "login";
+  try {
+    const path = mode === "register" ? "/api/auth/register" : "/api/auth/login";
+    const data = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Auth failed");
+      }
+      return res.json();
+    });
+    authToken = data.access_token;
+    localStorage.setItem("rananything_token", authToken);
+    if (data.refresh_token) localStorage.setItem("rananything_refresh", data.refresh_token);
+    authUser = data.user;
+    showAuth(false);
+    toast(mode === "register" ? "Đăng ký thành công" : "Đăng nhập thành công");
+    bootApp();
+  } catch (err) {
+    toast(err.message || "Lỗi xác thực");
+  }
+});
+
+$("#authToggleMode")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  const form = $("#authForm");
+  const mode = form.dataset.mode === "register" ? "login" : "register";
+  form.dataset.mode = mode;
+  $("#authSubmit").textContent = mode === "register" ? "Đăng ký" : "Đăng nhập";
+  $("#authToggleMode").textContent = mode === "register" ? "Đã có tài khoản? Đăng nhập" : "Chưa có tài khoản? Đăng ký";
+  $("#authTitle").textContent = mode === "register" ? "Tạo tài khoản" : "Đăng nhập";
+});
+
+$("#btnLogout")?.addEventListener("click", () => {
+  clearAuth();
+  showAuth(true);
+  toast("Đã đăng xuất");
+});
+
+$("#btnExportNb")?.addEventListener("click", async () => {
+  if (!notebookId) return;
+  try {
+    const blob = await api(`/api/notebooks/${notebookId}/export`);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rananything-${notebookId}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast("Đã export notebook");
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+$("#btnImportNb")?.addEventListener("click", () => $("#importInput")?.click());
+$("#importInput")?.addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    showLoading(true, "Đang import...");
+    const meta = await api("/api/notebooks/import", { method: "POST", body: fd });
+    toast("Import thành công");
+    await openNotebook(meta.id);
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    showLoading(false);
+    e.target.value = "";
+  }
+});
+
+$("#btnSettings")?.addEventListener("click", async () => {
+  try {
+    const s = await api("/api/settings");
+    $("#settingsProvider").value = s.llm_provider || "gemini";
+    $("#settingsModel").value = s.llm_model || "";
+    $("#settingsBaseUrl").value = s.openai_base_url || "";
+    $("#settingsGraphRag").checked = !!s.enable_graph_rag;
+    $("#settingsModal").classList.remove("hidden");
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+$("#settingsSave")?.addEventListener("click", async () => {
+  try {
+    await api("/api/settings", {
+      method: "POST",
+      body: {
+        llm_provider: $("#settingsProvider").value,
+        llm_model: $("#settingsModel").value || null,
+        openai_base_url: $("#settingsBaseUrl").value || null,
+        enable_graph_rag: $("#settingsGraphRag").checked,
+      },
+    });
+    $("#settingsModal").classList.add("hidden");
+    toast("Đã lưu settings");
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+$("#settingsClose")?.addEventListener("click", () => $("#settingsModal").classList.add("hidden"));
+
+bootApp();

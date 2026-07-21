@@ -3,10 +3,10 @@ import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
-from .core import RagAgent
-from .parsers import parse_upload_file
+if TYPE_CHECKING:
+    from .core import RagAgent
 
 NOTEBOOKS_ROOT = Path("./data/notebooks")
 
@@ -43,7 +43,7 @@ def _metadata_path(notebook_id: str) -> Path:
     return NOTEBOOKS_ROOT / notebook_id / "index.json"
 
 
-def list_notebooks() -> List[dict]:
+def list_notebooks(owner_id: Optional[str] = None) -> List[dict]:
     if not NOTEBOOKS_ROOT.exists():
         return []
     notebooks = []
@@ -57,6 +57,8 @@ def list_notebooks() -> List[dict]:
             with open(meta_file, "r", encoding="utf-8") as f:
                 meta = json.load(f)
             meta.setdefault("id", folder.name)
+            if owner_id is not None and meta.get("owner_id") != owner_id:
+                continue
             meta["source_count"] = len(list_source_files(meta["id"]))
             notebooks.append(meta)
         except Exception:
@@ -64,7 +66,11 @@ def list_notebooks() -> List[dict]:
     return notebooks
 
 
-def create_notebook(name: str = "Notebook mới", notebook_id: Optional[str] = None) -> dict:
+def create_notebook(
+    name: str = "Notebook mới",
+    notebook_id: Optional[str] = None,
+    owner_id: Optional[str] = None,
+) -> dict:
     notebook_id = notebook_id or str(uuid.uuid4())[:8]
     folder = NOTEBOOKS_ROOT / notebook_id
     folder.mkdir(parents=True, exist_ok=True)
@@ -73,6 +79,7 @@ def create_notebook(name: str = "Notebook mới", notebook_id: Optional[str] = N
     meta = {
         "id": notebook_id,
         "name": name.strip() or "Notebook mới",
+        "owner_id": owner_id,
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
     }
@@ -165,6 +172,8 @@ def save_upload_bytes(notebook_id: str, filename: str, data: bytes) -> Optional[
 
 
 def save_uploaded_file(notebook_id: str, uploaded) -> Optional[str]:
+    from .parsers import parse_upload_file
+
     text = parse_upload_file(uploaded)
     if not text.strip():
         return None

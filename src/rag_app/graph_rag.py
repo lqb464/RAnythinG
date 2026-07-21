@@ -138,6 +138,9 @@ def _normalize_entity(name: str) -> str:
     return re.sub(r"\s+", " ", name.strip().lower())
 
 
+def normalize_entity_key(name: str) -> str:
+    return _normalize_entity(name)
+
 def _rule_entities(text: str, top_n: int = 10) -> List[Entity]:
     tokens = [t for t in _TERM_RE.findall(text) if t.lower() not in _STOP]
     counts = Counter(tokens)
@@ -441,3 +444,131 @@ def deserialize_knowledge_graph(
         summaries = [c.summary for c in graph.communities]
         graph.community_embeddings = encode_passages(embedder, summaries)
     return graph
+
+
+def export_knowledge_graph_view(
+    graph: KnowledgeGraph,
+    chunk_sources: Sequence[str],
+    max_nodes: int = 60,
+) -> dict:
+    """Serialize KG for Assembly Canvas Graph mode (nodes + edges + layout)."""
+    from .rag_config import GRAPH_UI_MAX_NODES
+
+    max_nodes = max_nodes or GRAPH_UI_MAX_NODES
+    degree: Dict[str, int] = defaultdict(int)
+    for rel in graph.relations:
+        s, t = _normalize_entity(rel.source), _normalize_entity(rel.target)
+        if s:
+            degree[s] += 1
+        if t:
+            degree[t] += 1
+    for key, chunks in graph.entity_to_chunks.items():
+        degree[key] += len(chunks)
+
+    ranked_keys = sorted(graph.entities.keys(), key=lambda k: degree.get(k, 0), reverse=True)
+    keep = set(ranked_keys[:max_nodes])
+    if not keep and graph.entities:
+        keep = set(list(graph.entities.keys())[:max_nodes])
+
+    entity_community: Dict[str, int] = {}
+    for comm in graph.communities:
+        for name in comm.entity_names:
+            entity_community[_normalize_entity(name)] = comm.id
+
+    nx_graph = nx.Graph()
+    for key in keep:
+        nx_graph.add_node(key)
+    edge_payload: List[dict] = []
+    seen_edges: Set[Tuple[str, str, str]] = set()
+    for rel in graph.relations:
+        s, t = _normalize_entity(rel.source), _normalize_entity(rel.target)
+        if s not in keep or t not in keep or s == t:
+            continue
+        a, b = (s, t) if s < t else (t, s)
+        fingerprint = (a, b, rel.relation.lower())
+        if fingerprint in seen_edges:
+            continue
+        seen_edges.add(fingerprint)
+        nx_graph.add_edge(s, t)
+        edge_payload.append(
+            {
+                "id": f"e-{s}-{t}-{len(edge_payload)}",
+                "source": s,
+                "target": t,
+                "label": rel.relation,
+            }
+        )
+
+    # Co-occurrence edges when few explicit relations
+    if len(edge_payload) < max(3, len(keep) // 4):
+        for key in list(keep):
+            for other in graph.entity_to_chunks.get(key, set()):
+                for peer in graph.chunk_to_entities.get(other, set()):
+                    if peer in keep and peer != key:
+                        a, b = (key, peer) if key < peer else (peer, key)
+                        fingerprint = (a, b, "co-occurs")
+                        if fingerprint in seen_edges:
+                            continue
+                        seen_edges.add(fingerprint)
+                        nx_graph.add_edge(key, peer)
+                        edge_payload.append(
+                            {
+                                "id": f"e-{a}-{b}-co",
+                                "source": key,
+                                "target": peer,
+                                "label": "co-occurs",
+                            }
+                        )
+                        if len(edge_payload) >= max_nodes * 2:
+                            break
+                if len(edge_payload) >= max_nodes * 2:
+                    break
+            if len(edge_payload) >= max_nodes * 2:
+                break
+
+    positions: Dict[str, Tuple[float, float]] = {}
+    if nx_graph.number_of_nodes() > 0:
+        try:
+            raw_pos = nx.spring_layout(nx_graph, k=1.2, seed=42, iterations=40)
+            for key, (x, y) in raw_pos.items():
+                positions[key] = (float(x) * 420 + 400, float(y) * 320 + 280)
+        except Exception:
+            for i, key in enumerate(keep):
+                positions[key] = (80 + (i % 8) * 120, 80 + (i // 8) * 100)
+
+    nodes = []
+    for key in keep:
+        ent = graph.entities.get(key, Entity(name=key))
+        chunk_ids = sorted(graph.entity_to_chunks.get(key, set()))
+        sources = sorted({chunk_sources[i] for i in chunk_ids if 0 <= i < len(chunk_sources)})
+        x, y = positions.get(key, (100.0, 100.0))
+        nodes.append(
+            {
+                "id": key,
+                "label": ent.name,
+                "entity_type": ent.entity_type,
+                "community": entity_community.get(key),
+                "chunk_count": len(chunk_ids),
+                "sources": sources[:8],
+                "position": {"x": x, "y": y},
+            }
+        )
+
+    communities = [
+        {
+            "id": c.id,
+            "entity_names": c.entity_names[:12],
+            "summary": c.summary,
+            "chunk_count": len(c.chunk_indices),
+        }
+        for c in graph.communities
+    ]
+
+    return {
+        "ok": True,
+        "node_count": len(nodes),
+        "edge_count": len(edge_payload),
+        "nodes": nodes,
+        "edges": edge_payload,
+        "communities": communities,
+    }

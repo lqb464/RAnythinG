@@ -12,3 +12,4 @@ __pycache__/
 data/
 docs/
 uv.lock
+web/node_modules/

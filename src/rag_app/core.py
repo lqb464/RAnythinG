@@ -40,7 +40,9 @@ from .graph_rag import (
     add_source_to_knowledge_graph,
     build_knowledge_graph,
     deserialize_knowledge_graph,
+    export_knowledge_graph_view,
     is_global_query,
+    normalize_entity_key,
     remove_chunks_from_knowledge_graph,
     serialize_knowledge_graph,
 )
@@ -102,9 +104,9 @@ class RagAgent:
         self.index = faiss.IndexFlatIP(self.embeddings.shape[1])
         self.index.add(self.embeddings)
         self._rebuild_sparse_index()
-        from .rag_config import ENABLE_GRAPH_RAG
+        from .rag_config import graph_rag_enabled
 
-        if ENABLE_GRAPH_RAG:
+        if graph_rag_enabled():
             self.knowledge_graph = build_knowledge_graph(
                 texts,
                 [chunk.source for chunk in self.chunks],
@@ -145,9 +147,9 @@ class RagAgent:
 
         self._rebuild_sparse_index()
 
-        from .rag_config import ENABLE_GRAPH_RAG
+        from .rag_config import graph_rag_enabled
 
-        if ENABLE_GRAPH_RAG:
+        if graph_rag_enabled() or self.knowledge_graph is not None:
             all_texts = [c.text for c in self.chunks]
             all_sources = [c.source for c in self.chunks]
             new_indices = list(range(start_idx, start_idx + len(new_texts)))
@@ -894,7 +896,69 @@ class RagAgent:
             "documents": sources,
             "chunks": chunks,
             "avg_chunk_length": avg_chunk_len,
+            "graph_entities": len(self.knowledge_graph.entities) if self.knowledge_graph else 0,
+            "graph_relations": len(self.knowledge_graph.relations) if self.knowledge_graph else 0,
         }
+
+    def rebuild_knowledge_graph(self, use_llm: bool = True) -> dict:
+        """Build / rebuild entity graph for Graph mode (on-demand)."""
+        if not self.chunks:
+            self.knowledge_graph = None
+            return {"ok": False, "error": "Chưa có chunks — hãy upload tài liệu"}
+        texts = [c.text for c in self.chunks]
+        sources = [c.source for c in self.chunks]
+        self.knowledge_graph = build_knowledge_graph(
+            texts,
+            sources,
+            synthesizer=self.synthesizer if use_llm else None,
+            embedder=self.embedding_model,
+        )
+        return {
+            "ok": True,
+            "entities": len(self.knowledge_graph.entities),
+            "relations": len(self.knowledge_graph.relations),
+            "communities": len(self.knowledge_graph.communities),
+        }
+
+    def export_graph_view(self, max_nodes: int = 60) -> dict:
+        if self.knowledge_graph is None:
+            return {
+                "ok": False,
+                "built": False,
+                "nodes": [],
+                "edges": [],
+                "communities": [],
+                "message": "Chưa có knowledge graph — bấm Build Graph",
+            }
+        view = export_knowledge_graph_view(
+            self.knowledge_graph,
+            [c.source for c in self.chunks],
+            max_nodes=max_nodes,
+        )
+        view["built"] = True
+        return view
+
+    def ask_about_entity(self, entity_id: str, question: str = "") -> Tuple[str, List[DocumentChunk]]:
+        """Answer a question grounded in chunks linked to an entity."""
+        if self.knowledge_graph is None:
+            return "Chưa có knowledge graph. Hãy Build Graph trước.", []
+        key = normalize_entity_key(entity_id)
+        if key not in self.knowledge_graph.entities and entity_id not in self.knowledge_graph.entities:
+            # try label match
+            for k, ent in self.knowledge_graph.entities.items():
+                if normalize_entity_key(ent.name) == key or ent.name.lower() == entity_id.lower():
+                    key = k
+                    break
+            else:
+                return f"Không tìm thấy entity «{entity_id}» trong graph.", []
+        chunk_ids = sorted(self.knowledge_graph.entity_to_chunks.get(key, set()))
+        if not chunk_ids:
+            return f"Entity «{entity_id}» chưa liên kết chunk nào.", []
+        label = self.knowledge_graph.entities[key].name
+        q = (question or "").strip() or f"Giải thích khái niệm «{label}» dựa trên tài liệu."
+        # Restrict retrieval to entity-linked sources
+        sources = list({self.chunks[i].source for i in chunk_ids if 0 <= i < len(self.chunks)})
+        return self.answer(q, top_k=4, allowed_sources=sources or None)
 
     def save_query_history(self, history: Sequence[Dict[str, str]], path: str) -> None:
         with open(path, "w", encoding="utf-8") as f:

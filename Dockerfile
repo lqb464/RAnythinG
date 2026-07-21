@@ -1,3 +1,10 @@
+FROM node:20-alpine AS web
+WORKDIR /repo
+COPY web ./web
+RUN mkdir -p src/rag_app/static
+WORKDIR /repo/web
+RUN npm install && npm run build
+
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -10,6 +17,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+COPY --from=web /repo/src/rag_app/static/web ./src/rag_app/static/web
 
 ENV HOST=0.0.0.0
 ENV PORT=8000

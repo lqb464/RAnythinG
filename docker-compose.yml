@@ -22,12 +22,19 @@ services:
     container_name: rananything-app
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:8000"
     environment:
       DATABASE_URL: postgresql://rananything:rananything@db:5432/rananything
       DATA_DIR: /data
       HOST: 0.0.0.0
       PORT: 8000
+      JWT_SECRET: ${JWT_SECRET:-change-me-dev-only-not-for-production}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      EXTERNAL_API_TOKEN: ${EXTERNAL_API_TOKEN:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_API_KEYS: ${GEMINI_API_KEYS:-}
+      ENABLE_GRAPH_RAG: ${ENABLE_GRAPH_RAG:-false}
       # Cache model Hugging Face trong volume
       HF_HOME: /data/huggingface
       TRANSFORMERS_CACHE: /data/huggingface

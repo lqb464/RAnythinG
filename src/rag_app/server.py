@@ -1,19 +1,34 @@
 import asyncio
+import io
 import json
+import os
 import re
+import zipfile
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import agent_cache, store
+from .auth import (
+    AuthUser,
+    create_access_token,
+    create_refresh_token,
+    create_user,
+    decode_token,
+    get_user_by_email,
+    require_external_token,
+    require_user,
+    verify_password,
+)
 from .core import get_embedding_model
 from .parsers import parse_upload_bytes
 from .site_pages import render_page
-from .synthesis import load_synthesizer_eager
+from .spa import mount_app_spa
+from .synthesis import get_synthesizer, load_synthesizer_eager, reload_synthesizer_config
 
 
 def _load_models_eagerly() -> None:
@@ -23,7 +38,7 @@ def _load_models_eagerly() -> None:
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-app = FastAPI(title="RAnythinG", version="1.0")
+app = FastAPI(title="RAnythinG", version="1.1")
 
 
 @app.on_event("startup")
@@ -40,10 +55,106 @@ async def startup() -> None:
 
 @app.get("/api/health")
 async def health():
+    synth = get_synthesizer()
     return {
         "status": "ok",
         "storage": store.backend_name,
+        "external_token_required": bool(
+            (os.getenv("EXTERNAL_API_TOKEN") or os.getenv("RANYTHING_API_TOKEN") or "").strip()
+        ),
+        "auth_required": os.getenv("AUTH_REQUIRED", "true").lower() in ("1", "true", "yes"),
+        "llm_provider": getattr(synth, "provider_name", "unknown"),
+        "version": "1.1",
     }
+
+
+def _can_access(meta: dict, user: AuthUser) -> bool:
+    if user.id in ("anonymous",):
+        return True
+    owner = meta.get("owner_id")
+    if owner is None or owner == "":
+        # Legacy / external projects: allow authenticated users to open via deep-link
+        return True
+    return owner == user.id
+
+
+def _require_notebook(notebook_id: str, user: AuthUser) -> dict:
+    meta = store.get_notebook(notebook_id)
+    if not meta:
+        raise HTTPException(404, "Notebook không tồn tại")
+    if not _can_access(meta, user):
+        raise HTTPException(403, "Không có quyền truy cập notebook này")
+    return meta
+
+
+# --- Auth ---
+
+class RegisterBody(BaseModel):
+    email: str
+    password: str = Field(min_length=6, max_length=128)
+
+
+class LoginBody(BaseModel):
+    email: str
+    password: str
+
+
+class RefreshBody(BaseModel):
+    refresh_token: str
+
+
+@app.post("/api/auth/register")
+async def auth_register(body: RegisterBody):
+    try:
+        user = create_user(body.email, body.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if "registered" in str(exc).lower() else 400, detail=str(exc))
+    access = create_access_token(user["id"], user["email"])
+    refresh = create_refresh_token(user["id"], user["email"])
+    return {
+        "access_token": access,
+        "refresh_token": refresh,
+        "token_type": "bearer",
+        "user": {"id": user["id"], "email": user["email"]},
+    }
+
+
+@app.post("/api/auth/login")
+async def auth_login(body: LoginBody):
+    user = get_user_by_email(body.email)
+    if not user or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Email hoặc mật khẩu không đúng")
+    access = create_access_token(user["id"], user["email"])
+    refresh = create_refresh_token(user["id"], user["email"])
+    return {
+        "access_token": access,
+        "refresh_token": refresh,
+        "token_type": "bearer",
+        "user": {"id": user["id"], "email": user["email"]},
+    }
+
+
+@app.post("/api/auth/refresh")
+async def auth_refresh(body: RefreshBody):
+    try:
+        payload = decode_token(body.refresh_token, expected_type="refresh")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Refresh token không hợp lệ")
+    uid = str(payload.get("sub") or "")
+    email = str(payload.get("email") or "")
+    access = create_access_token(uid, email)
+    refresh = create_refresh_token(uid, email)
+    return {
+        "access_token": access,
+        "refresh_token": refresh,
+        "token_type": "bearer",
+        "user": {"id": uid, "email": email},
+    }
+
+
+@app.get("/api/auth/me")
+async def auth_me(user: AuthUser = Depends(require_user)):
+    return {"id": user.id, "email": user.email}
 
 
 class NotebookCreate(BaseModel):
@@ -188,26 +299,24 @@ async def about_page(request: Request):
     return render_page(request, "about.html", "about")
 
 
-@app.get("/app")
-async def app_page():
-    return FileResponse(STATIC_DIR / "app.html")
+# SPA mount must be after API routes; see bottom of module.
 
 
 @app.get("/api/notebooks")
-async def list_notebooks():
-    return store.list_notebooks()
+async def list_notebooks(user: AuthUser = Depends(require_user)):
+    owner = None if user.id == "anonymous" else user.id
+    return store.list_notebooks(owner_id=owner)
 
 
 @app.post("/api/notebooks")
-async def create_notebook(body: NotebookCreate):
-    return store.create_notebook(body.name)
+async def create_notebook(body: NotebookCreate, user: AuthUser = Depends(require_user)):
+    owner = None if user.id == "anonymous" else user.id
+    return store.create_notebook(body.name, owner_id=owner)
 
 
 @app.get("/api/notebooks/{notebook_id}")
-async def get_notebook(notebook_id: str):
-    meta = store.get_notebook(notebook_id)
-    if not meta:
-        raise HTTPException(404, "Notebook không tồn tại")
+async def get_notebook(notebook_id: str, user: AuthUser = Depends(require_user)):
+    meta = _require_notebook(notebook_id, user)
     agent = await agent_cache.async_get_agent(notebook_id)
     stats = agent.get_stats() if len(agent.chunks) > 0 else {"documents": 0, "chunks": 0, "avg_chunk_length": 0}
     return {
@@ -219,24 +328,27 @@ async def get_notebook(notebook_id: str):
 
 
 @app.patch("/api/notebooks/{notebook_id}")
-async def rename_notebook(notebook_id: str, body: NotebookRename):
-    if not store.get_notebook(notebook_id):
-        raise HTTPException(404, "Notebook không tồn tại")
+async def rename_notebook(notebook_id: str, body: NotebookRename, user: AuthUser = Depends(require_user)):
+    _require_notebook(notebook_id, user)
     store.update_notebook_name(notebook_id, body.name)
     return store.get_notebook(notebook_id)
 
 
 @app.delete("/api/notebooks/{notebook_id}")
-async def delete_notebook(notebook_id: str):
+async def delete_notebook(notebook_id: str, user: AuthUser = Depends(require_user)):
+    _require_notebook(notebook_id, user)
     agent_cache.invalidate_agent(notebook_id)
     store.delete_notebook(notebook_id)
     return {"ok": True}
 
 
 @app.post("/api/notebooks/{notebook_id}/upload")
-async def upload_files(notebook_id: str, files: List[UploadFile] = File(...)):
-    if not store.get_notebook(notebook_id):
-        raise HTTPException(404, "Notebook không tồn tại")
+async def upload_files(
+    notebook_id: str,
+    files: List[UploadFile] = File(...),
+    user: AuthUser = Depends(require_user),
+):
+    _require_notebook(notebook_id, user)
     added: List[str] = []
     existing = set(store.list_source_files(notebook_id))
     agent = await agent_cache.async_get_agent(notebook_id)
@@ -274,19 +386,26 @@ async def upload_files(notebook_id: str, files: List[UploadFile] = File(...)):
 
 
 @app.delete("/api/notebooks/{notebook_id}/sources/{filename:path}")
-async def delete_source(notebook_id: str, filename: str):
+async def delete_source(notebook_id: str, filename: str, user: AuthUser = Depends(require_user)):
+    _require_notebook(notebook_id, user)
     store.remove_source(notebook_id, filename)
     agent_cache.remove_document(notebook_id, filename)
     return {"sources": _all_sources(notebook_id)}
 
 
 @app.get("/api/notebooks/{notebook_id}/chat")
-async def get_chat_history(notebook_id: str):
+async def get_chat_history(notebook_id: str, user: AuthUser = Depends(require_user)):
+    _require_notebook(notebook_id, user)
     return store.load_chat_history(notebook_id)
 
 
 @app.get("/api/notebooks/{notebook_id}/suggestions")
-async def get_suggestions(notebook_id: str, sources: str = ""):
+async def get_suggestions(
+    notebook_id: str,
+    sources: str = "",
+    user: AuthUser = Depends(require_user),
+):
+    _require_notebook(notebook_id, user)
     agent = await agent_cache.async_get_agent(notebook_id)
     allowed = [s for s in sources.split("|") if s] if sources else None
     return {"suggestions": agent.generate_suggested_questions(allowed_sources=allowed, limit=4)}
@@ -307,7 +426,8 @@ def _persist_chat_turn(notebook_id: str, query: str, answer: str, source_names: 
 
 
 @app.post("/api/notebooks/{notebook_id}/chat")
-async def chat(notebook_id: str, body: ChatRequest):
+async def chat(notebook_id: str, body: ChatRequest, user: AuthUser = Depends(require_user)):
+    _require_notebook(notebook_id, user)
     if not body.query.strip():
         raise HTTPException(400, "Câu hỏi trống")
     if not body.sources:
@@ -332,7 +452,8 @@ async def chat(notebook_id: str, body: ChatRequest):
 
 
 @app.post("/api/notebooks/{notebook_id}/chat/stream")
-async def chat_stream(notebook_id: str, body: ChatRequest):
+async def chat_stream(notebook_id: str, body: ChatRequest, user: AuthUser = Depends(require_user)):
+    _require_notebook(notebook_id, user)
     if not body.query.strip():
         raise HTTPException(400, "Câu hỏi trống")
     if not body.sources:
@@ -361,14 +482,14 @@ async def chat_stream(notebook_id: str, body: ChatRequest):
 
 
 @app.get("/api/notebooks/{notebook_id}/notes")
-async def get_notes(notebook_id: str):
+async def get_notes(notebook_id: str, user: AuthUser = Depends(require_user)):
+    _require_notebook(notebook_id, user)
     return store.load_notes(notebook_id)
 
 
 @app.post("/api/notebooks/{notebook_id}/notes")
-async def add_note(notebook_id: str, body: NoteCreate):
-    if not store.get_notebook(notebook_id):
-        raise HTTPException(status_code=404, detail="Notebook không tồn tại")
+async def add_note(notebook_id: str, body: NoteCreate, user: AuthUser = Depends(require_user)):
+    _require_notebook(notebook_id, user)
     title = body.title.strip()
     content = body.content.strip()
     if not title or not content:
@@ -397,9 +518,13 @@ async def add_note(notebook_id: str, body: NoteCreate):
 
 
 @app.put("/api/notebooks/{notebook_id}/notes/{note_id}")
-async def update_note(notebook_id: str, note_id: str, body: NoteCreate):
-    if not store.get_notebook(notebook_id):
-        raise HTTPException(status_code=404, detail="Notebook không tồn tại")
+async def update_note(
+    notebook_id: str,
+    note_id: str,
+    body: NoteCreate,
+    user: AuthUser = Depends(require_user),
+):
+    _require_notebook(notebook_id, user)
     title = body.title.strip()
     content = body.content.strip()
     if not title or not content:
@@ -431,9 +556,8 @@ async def update_note(notebook_id: str, note_id: str, body: NoteCreate):
 
 
 @app.delete("/api/notebooks/{notebook_id}/notes/{note_id}")
-async def delete_note(notebook_id: str, note_id: str):
-    if not store.get_notebook(notebook_id):
-        raise HTTPException(status_code=404, detail="Notebook không tồn tại")
+async def delete_note(notebook_id: str, note_id: str, user: AuthUser = Depends(require_user)):
+    _require_notebook(notebook_id, user)
     notes = store.load_notes(notebook_id)
     note_to_remove = next((n for n in notes if n["id"] == note_id), None)
     if not note_to_remove:
@@ -447,9 +571,8 @@ async def delete_note(notebook_id: str, note_id: str):
 
 
 @app.post("/api/notebooks/{notebook_id}/notes/{note_id}/to_source")
-async def note_to_source(notebook_id: str, note_id: str):
-    if not store.get_notebook(notebook_id):
-        raise HTTPException(status_code=404, detail="Notebook không tồn tại")
+async def note_to_source(notebook_id: str, note_id: str, user: AuthUser = Depends(require_user)):
+    _require_notebook(notebook_id, user)
     notes = store.load_notes(notebook_id)
     note = next((n for n in notes if n["id"] == note_id), None)
     if not note:
@@ -475,9 +598,13 @@ async def note_to_source(notebook_id: str, note_id: str):
 
 
 @app.post("/api/notebooks/{notebook_id}/studio/{tool}")
-async def studio_generate(notebook_id: str, tool: str, body: StudioRequest):
-    if not store.get_notebook(notebook_id):
-        raise HTTPException(404, "Notebook không tồn tại")
+async def studio_generate(
+    notebook_id: str,
+    tool: str,
+    body: StudioRequest,
+    user: AuthUser = Depends(require_user),
+):
+    _require_notebook(notebook_id, user)
     handler = STUDIO_TOOLS.get(tool)
     if handler is None:
         raise HTTPException(404, f"Studio tool '{tool}' không tồn tại")
@@ -496,11 +623,9 @@ async def studio_generate(notebook_id: str, tool: str, body: StudioRequest):
 
 
 @app.get("/api/notebooks/{notebook_id}/studio")
-async def list_studio_outputs(notebook_id: str):
-    if not store.get_notebook(notebook_id):
-        raise HTTPException(404, "Notebook không tồn tại")
+async def list_studio_outputs(notebook_id: str, user: AuthUser = Depends(require_user)):
+    _require_notebook(notebook_id, user)
     outputs = store.load_studio_outputs(notebook_id)
-    # Strip heavy result payload for list view — frontend fetches full on click
     return [
         {k: v for k, v in o.items() if k != "result"}
         for o in outputs
@@ -508,7 +633,12 @@ async def list_studio_outputs(notebook_id: str):
 
 
 @app.get("/api/notebooks/{notebook_id}/studio/{output_id}")
-async def get_studio_output(notebook_id: str, output_id: str):
+async def get_studio_output(
+    notebook_id: str,
+    output_id: str,
+    user: AuthUser = Depends(require_user),
+):
+    _require_notebook(notebook_id, user)
     outputs = store.load_studio_outputs(notebook_id)
     for o in outputs:
         if o.get("id") == output_id:
@@ -517,13 +647,196 @@ async def get_studio_output(notebook_id: str, output_id: str):
 
 
 @app.delete("/api/notebooks/{notebook_id}/studio/{output_id}")
-async def delete_studio_output(notebook_id: str, output_id: str):
+async def delete_studio_output(
+    notebook_id: str,
+    output_id: str,
+    user: AuthUser = Depends(require_user),
+):
+    _require_notebook(notebook_id, user)
     if not store.delete_studio_output(notebook_id, output_id):
         raise HTTPException(404, "Output không tồn tại")
     return {"ok": True}
 
 
-# --- External API for integration (e.g. with AgenThink) ---
+class GraphAskBody(BaseModel):
+    entity_id: str
+    question: str = ""
+
+
+class GraphBuildBody(BaseModel):
+    use_llm: bool = True
+    max_nodes: int = 60
+
+
+@app.get("/api/notebooks/{notebook_id}/graph")
+async def get_graph(notebook_id: str, user: AuthUser = Depends(require_user)):
+    """Return entity graph for Graph mode (empty if not built yet)."""
+    _require_notebook(notebook_id, user)
+    agent = await agent_cache.async_get_agent(notebook_id)
+    view = agent.export_graph_view()
+    view["enable_on_index"] = os.getenv("ENABLE_GRAPH_RAG", "false").lower() in ("1", "true", "yes")
+    return view
+
+
+@app.post("/api/notebooks/{notebook_id}/graph/build")
+async def build_graph(
+    notebook_id: str,
+    body: GraphBuildBody = GraphBuildBody(),
+    user: AuthUser = Depends(require_user),
+):
+    """On-demand GraphRAG build (rule + optional LLM extraction)."""
+    _require_notebook(notebook_id, user)
+    agent = await agent_cache.async_get_agent(notebook_id)
+    if len(agent.chunks) == 0:
+        raise HTTPException(400, "Chưa có chỉ mục — hãy upload tài liệu trước")
+
+    loop = asyncio.get_event_loop()
+
+    def _build():
+        result = agent.rebuild_knowledge_graph(use_llm=body.use_llm)
+        store.persist_index(notebook_id, agent)
+        return result
+
+    result = await loop.run_in_executor(None, _build)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Build graph thất bại"))
+    view = agent.export_graph_view(max_nodes=body.max_nodes)
+    view["build"] = result
+    return view
+
+
+@app.post("/api/notebooks/{notebook_id}/graph/ask")
+async def ask_graph_entity(
+    notebook_id: str,
+    body: GraphAskBody,
+    user: AuthUser = Depends(require_user),
+):
+    """Ask a question grounded in chunks linked to a graph entity."""
+    _require_notebook(notebook_id, user)
+    if not (body.entity_id or "").strip():
+        raise HTTPException(400, "entity_id trống")
+    agent = await agent_cache.async_get_agent(notebook_id)
+    if agent.knowledge_graph is None:
+        raise HTTPException(400, "Chưa có knowledge graph — bấm Build Graph")
+    loop = asyncio.get_event_loop()
+    answer, chunks = await loop.run_in_executor(
+        None,
+        lambda: agent.ask_about_entity(body.entity_id.strip(), body.question or ""),
+    )
+    return {
+        "ok": True,
+        "entity_id": body.entity_id,
+        "answer": answer,
+        "answer_html": _format_answer_html(answer),
+        "sources": [{"source": c.source, "text": c.text[:300]} for c in chunks],
+    }
+
+
+@app.get("/api/notebooks/{notebook_id}/export")
+async def export_notebook(notebook_id: str, user: AuthUser = Depends(require_user)):
+    """Export notebook as ZIP: meta, notes, chat, studio outputs, source filenames (+ text)."""
+    _require_notebook(notebook_id, user)
+    meta = store.get_notebook(notebook_id) or {}
+    payload = {
+        "version": 1,
+        "meta": meta,
+        "notes": store.load_notes(notebook_id),
+        "chat": store.load_chat_history(notebook_id),
+        "studio": store.load_studio_outputs(notebook_id),
+        "sources": store.list_source_files(notebook_id),
+        "documents": [{"filename": n, "text": t} for n, t in store.collect_documents(notebook_id)],
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("notebook.json", json.dumps(payload, ensure_ascii=False, indent=2))
+    buf.seek(0)
+    safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", notebook_id)[:40]
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="rananything-{safe}.zip"'},
+    )
+
+
+@app.post("/api/notebooks/import")
+async def import_notebook(
+    file: UploadFile = File(...),
+    user: AuthUser = Depends(require_user),
+):
+    """Restore a notebook from export ZIP (creates a new notebook owned by caller)."""
+    raw = await file.read()
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            data = json.loads(zf.read("notebook.json").decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(400, f"Invalid export ZIP: {exc}") from exc
+
+    name = (data.get("meta") or {}).get("name") or "Notebook imported"
+    owner = None if user.id == "anonymous" else user.id
+    meta = store.create_notebook(name, owner_id=owner)
+    nb_id = meta["id"]
+
+    for doc in data.get("documents") or []:
+        fn = doc.get("filename") or "doc.txt"
+        text = doc.get("text") or ""
+        if fn.startswith("[Ghi chú]"):
+            continue
+        store.save_upload_bytes(nb_id, fn, text.encode("utf-8"))
+
+    notes = data.get("notes") or []
+    if notes:
+        store.save_notes(nb_id, notes)
+    chat = data.get("chat") or []
+    if chat:
+        store.save_chat_history(nb_id, chat)
+    for entry in data.get("studio") or []:
+        store.save_studio_output(
+            nb_id,
+            entry.get("tool", "summary"),
+            entry.get("label", "Imported"),
+            entry.get("sources") or [],
+            entry.get("result") or {},
+        )
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, agent_cache.rebuild_agent, nb_id)
+    return store.get_notebook(nb_id)
+
+
+class SettingsBody(BaseModel):
+    llm_provider: Optional[str] = None  # gemini | openai_compat | local
+    llm_model: Optional[str] = None
+    openai_base_url: Optional[str] = None
+    enable_graph_rag: Optional[bool] = None
+
+
+@app.get("/api/settings")
+async def get_settings(user: AuthUser = Depends(require_user)):
+    synth = get_synthesizer()
+    return {
+        "llm_provider": getattr(synth, "provider_name", "local"),
+        "llm_model": getattr(synth, "active_model", ""),
+        "openai_base_url": getattr(synth, "api_base_url", "") or "",
+        "gemini_key_count": getattr(synth, "gemini_key_count", 0),
+        "enable_graph_rag": os.getenv("ENABLE_GRAPH_RAG", "false").lower() in ("1", "true", "yes"),
+        "language_hint": os.getenv("UI_LANGUAGE", "vi"),
+    }
+
+
+@app.post("/api/settings")
+async def update_settings(body: SettingsBody, user: AuthUser = Depends(require_user)):
+    """Runtime provider switch (process-local). Persists via env for next boot when possible."""
+    if body.enable_graph_rag is not None:
+        os.environ["ENABLE_GRAPH_RAG"] = "true" if body.enable_graph_rag else "false"
+    reload_synthesizer_config(
+        provider=body.llm_provider,
+        model=body.llm_model,
+        openai_base_url=body.openai_base_url,
+    )
+    return await get_settings(user)
+
+
+# --- External / service API (optional token via EXTERNAL_API_TOKEN) ---
 
 class ExternalRetrieveRequest(BaseModel):
     project_id: str
@@ -544,6 +857,7 @@ class ExternalQueryRequest(BaseModel):
 class ExternalProjectCreate(BaseModel):
     project_id: str
     name: Optional[str] = None
+    owner_id: Optional[str] = None
 
 
 class ExternalStudioRequest(BaseModel):
@@ -552,7 +866,10 @@ class ExternalStudioRequest(BaseModel):
 
 
 @app.post("/api/external/projects")
-async def external_create_project(body: ExternalProjectCreate):
+async def external_create_project(
+    body: ExternalProjectCreate,
+    _: None = Depends(require_external_token),
+):
     project_id = (body.project_id or "").strip()
     if not project_id:
         raise HTTPException(400, "project_id không được trống")
@@ -568,7 +885,7 @@ async def external_create_project(body: ExternalProjectCreate):
             "sources": store.list_source_files(project_id),
             "stats": agent.get_stats() if len(agent.chunks) > 0 else {"documents": 0, "chunks": 0},
         }
-    meta = store.create_notebook(name, notebook_id=project_id)
+    meta = store.create_notebook(name, notebook_id=project_id, owner_id=body.owner_id)
     return {
         "ok": True,
         "created": True,
@@ -580,7 +897,10 @@ async def external_create_project(body: ExternalProjectCreate):
 
 
 @app.get("/api/external/projects/{project_id}")
-async def external_get_project(project_id: str):
+async def external_get_project(
+    project_id: str,
+    _: None = Depends(require_external_token),
+):
     project_id = project_id.strip()
     if not project_id:
         raise HTTPException(400, "project_id không được trống")
@@ -600,7 +920,10 @@ async def external_get_project(project_id: str):
 
 
 @app.get("/api/external/projects/{project_id}/sources")
-async def external_list_sources(project_id: str):
+async def external_list_sources(
+    project_id: str,
+    _: None = Depends(require_external_token),
+):
     project_id = project_id.strip()
     if not project_id:
         raise HTTPException(400, "project_id không được trống")
@@ -610,7 +933,11 @@ async def external_list_sources(project_id: str):
 
 
 @app.post("/api/external/upload")
-async def external_upload(project_id: str, files: List[UploadFile] = File(...)):
+async def external_upload(
+    project_id: str,
+    files: List[UploadFile] = File(...),
+    _: None = Depends(require_external_token),
+):
     project_id = project_id.strip()
     if not project_id:
         raise HTTPException(400, "project_id không được trống")
@@ -654,7 +981,10 @@ async def external_upload(project_id: str, files: List[UploadFile] = File(...)):
 
 
 @app.post("/api/external/retrieve")
-async def external_retrieve(body: ExternalRetrieveRequest):
+async def external_retrieve(
+    body: ExternalRetrieveRequest,
+    _: None = Depends(require_external_token),
+):
     project_id = body.project_id.strip()
     if not project_id:
         raise HTTPException(400, "project_id không được trống")
@@ -684,7 +1014,10 @@ async def external_retrieve(body: ExternalRetrieveRequest):
 
 
 @app.post("/api/external/query")
-async def external_query(body: ExternalQueryRequest):
+async def external_query(
+    body: ExternalQueryRequest,
+    _: None = Depends(require_external_token),
+):
     project_id = body.project_id.strip()
     if not project_id:
         raise HTTPException(400, "project_id không được trống")
@@ -721,7 +1054,10 @@ async def external_query(body: ExternalQueryRequest):
 
 
 @app.post("/api/external/summarize")
-async def external_summarize(body: ExternalStudioRequest):
+async def external_summarize(
+    body: ExternalStudioRequest,
+    _: None = Depends(require_external_token),
+):
     project_id = body.project_id.strip()
     if not project_id:
         raise HTTPException(400, "project_id không được trống")
@@ -740,7 +1076,10 @@ async def external_summarize(body: ExternalStudioRequest):
 
 
 @app.post("/api/external/report")
-async def external_report(body: ExternalStudioRequest):
+async def external_report(
+    body: ExternalStudioRequest,
+    _: None = Depends(require_external_token),
+):
     project_id = body.project_id.strip()
     if not project_id:
         raise HTTPException(400, "project_id không được trống")
@@ -759,7 +1098,10 @@ async def external_report(body: ExternalStudioRequest):
 
 
 @app.delete("/api/external/projects/{project_id}")
-async def external_delete_project(project_id: str):
+async def external_delete_project(
+    project_id: str,
+    _: None = Depends(require_external_token),
+):
     project_id = project_id.strip()
     if not store.get_notebook(project_id):
         raise HTTPException(404, "Project không tồn tại")
@@ -769,7 +1111,11 @@ async def external_delete_project(project_id: str):
 
 
 @app.delete("/api/external/projects/{project_id}/sources/{filename:path}")
-async def external_delete_source(project_id: str, filename: str):
+async def external_delete_source(
+    project_id: str,
+    filename: str,
+    _: None = Depends(require_external_token),
+):
     project_id = project_id.strip()
     if not store.get_notebook(project_id):
         raise HTTPException(404, "Project không tồn tại")
@@ -784,6 +1130,7 @@ async def external_delete_source(project_id: str, filename: str):
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+mount_app_spa(app)
 
 
 def run(host: str | None = None, port: int | None = None) -> None:
@@ -791,5 +1138,5 @@ def run(host: str | None = None, port: int | None = None) -> None:
     import uvicorn
 
     host = host or os.getenv("HOST", "127.0.0.1")
-    port = int(port or os.getenv("PORT", "8001"))
+    port = int(port or os.getenv("PORT", "8000"))
     uvicorn.run("src.rag_app.server:app", host=host, port=port, reload=True)

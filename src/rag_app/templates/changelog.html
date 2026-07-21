@@ -13,6 +13,50 @@
   <div class="changelog">
     <article class="changelog-entry">
       <div class="changelog-meta">
+        <span class="changelog-version">v1.2.1</span>
+        <time class="changelog-date">2026-07-21</time>
+        <span class="changelog-tag tag-new">Mới</span>
+      </div>
+      <h3>Graph mode (GraphRAG UI)</h3>
+      <ul>
+        <li>Toggle Assembly / Graph trên workspace; entity graph React Flow + communities</li>
+        <li>Build Graph on-demand (rule hoặc LLM); click entity → Ask</li>
+        <li>API <code>/graph</code>, <code>/graph/build</code>, <code>/graph/ask</code> — auto-index GraphRAG vẫn tắt mặc định</li>
+      </ul>
+    </article>
+
+    <article class="changelog-entry">
+      <div class="changelog-meta">
+        <span class="changelog-version">v1.2.0</span>
+        <time class="changelog-date">2026-07-21</time>
+        <span class="changelog-tag tag-new">Mới</span>
+      </div>
+      <h3>Assembly Canvas + landing gọn</h3>
+      <ul>
+        <li>Workspace React Flow: kéo nguồn, nối context vào Chat, gắn Studio artifact lên board</li>
+        <li>Quiz chấm điểm · Flashcard lật · Mind map expand</li>
+        <li>Landing tập trung sản phẩm; nav marketing thu gọn</li>
+      </ul>
+    </article>
+
+    <article class="changelog-entry">
+      <div class="changelog-meta">
+        <span class="changelog-version">v1.1.0</span>
+        <time class="changelog-date">2026-07-21</time>
+        <span class="changelog-tag tag-new">Mới</span>
+      </div>
+      <h3>Multi-user, LLM linh hoạt, export, service API có token</h3>
+      <ul>
+        <li>JWT đăng ký/đăng nhập; notebook theo <code>owner_id</code></li>
+        <li>Khóa <code>/api/external/*</code> bằng <code>EXTERNAL_API_TOKEN</code> (Bearer từ service client)</li>
+        <li>Gemini multi-key + OpenAI-compatible / Ollama / vLLM (Settings UI)</li>
+        <li>Export / import notebook ZIP; sửa notebook id dài (<code>user_*</code>) + Studio persist trên Postgres</li>
+        <li>Tests + RAG golden smoke trong CI</li>
+      </ul>
+    </article>
+
+    <article class="changelog-entry">
+      <div class="changelog-meta">
         <span class="changelog-version">v0.3.0</span>
         <time class="changelog-date">2026-07-08</time>
         <span class="changelog-tag tag-new">Mới</span>
