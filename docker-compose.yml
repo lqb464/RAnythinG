@@ -17,9 +17,11 @@ services:
       timeout: 5s
       retries: 10
 
-  app:
-    build: .
-    container_name: ranything-app
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ranything-api
     restart: unless-stopped
     ports:
       - "${PORT:-8000}:8000"
@@ -35,7 +37,6 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_API_KEYS: ${GEMINI_API_KEYS:-}
       ENABLE_GRAPH_RAG: ${ENABLE_GRAPH_RAG:-false}
-      # Cache model Hugging Face trong volume
       HF_HOME: /data/huggingface
       TRANSFORMERS_CACHE: /data/huggingface
     volumes:
@@ -43,6 +44,21 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ranything-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      API_ORIGIN: http://api:8000
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      - api
 
 volumes:
   pgdata:

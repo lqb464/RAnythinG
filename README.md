@@ -1,14 +1,32 @@
 # RAnythinG
 
-Local **NotebookLM-style** web RAG: upload documents → auto-index → grounded Q&A with citations — runs on your machine.
+Local privacy-first RAG web app: upload documents, index them on your machine, and ask grounded questions with source citations.
 
-**Self-contained.** No AgenThink, dOCRead, VirtuaLook, or any sibling service required. OCR runs via in-process Docling; FAISS vector index on disk; LLM via Gemini / Ollama / vLLM / local models.
+Features an **Assembly Canvas** workspace (drag sources, chat, Studio artifacts) and optional **Graph mode** (entity GraphRAG). Runs fully local — FastAPI API, Next.js UI, FAISS (+ BM25) retrieval, Docling parsing, LLM via Gemini / Ollama / vLLM / local models.
 
 <p align="center">
   <img src="assets/landing-page.png" alt="RAnythinG product page" width="900" />
 </p>
 
-**RAG · Local · Privacy-first** — PDF / DOCX / MD · source citations · Docker ready
+**RAG · Local · Privacy-first** — PDF / DOCX / MD · citations · Docker ready
+
+---
+
+## Repository layout
+
+| Path | What it is | When you touch it |
+|------|------------|-------------------|
+| `backend/` | Python API, RAG, auth, storage | **Edit here** to change server / RAG behavior |
+| `frontend/` | Next.js App Router UI | **Edit here** to change the product site and `/app` workspace |
+
+```text
+frontend/   → Next.js :3000  (UI; proxies /api → FastAPI)
+backend/    → FastAPI  :8000  (API only) — run: python -m backend
+```
+
+- **Docker:** `docker compose up --build` runs `web` + `api` + `db`. Open **http://localhost:3000**.
+- **Change backend / RAG:** edit `backend/`.
+- **Change UI:** edit `frontend/`, then `npm run dev` (or rebuild the `web` image).
 
 ---
 
@@ -18,9 +36,9 @@ Local **NotebookLM-style** web RAG: upload documents → auto-index → grounded
 |:---:|:---:|:---:|
 | ![Landing](assets/landing-page.png) | ![Workspace](assets/app-workspace.png) | ![Chat](assets/app-chat-studio.png) |
 
-- **Landing** — product intro and CTA to open the app  
-- **Workspace** — Assembly Canvas (sources · chat · Studio artifacts) + **Graph mode** (entity GraphRAG)  
-- **Chat + Studio** — grounded Q&A with citations; interactive Studio quiz / flashcards / mind map  
+- **Landing** — product intro and CTA
+- **Workspace** — Assembly Canvas + Graph mode
+- **Chat + Studio** — grounded Q&A; quiz / flashcards / mind map on the board
 
 ---
 
@@ -33,103 +51,103 @@ copy .env.example .env
 docker compose up --build
 ```
 
-Open **http://localhost:8000**
+Open **http://localhost:3000** (site) and **http://localhost:3000/app** (workspace).
+API health: **http://localhost:8000/api/health**
 
 | Component | Details |
 |-----------|---------|
-| App + marketing | `http://localhost:8000` |
-| Workspace UI | `http://localhost:8000/app` |
+| UI (Next.js) | port `3000` |
+| API (FastAPI) | port `8000` |
 | Postgres | port `5432`, user/pass/db = `ranything` |
-| Data | workspace/file/chat → Postgres; FAISS → `app_data` volume |
-| Auth | Sign up / sign in with JWT on `/app` (`AUTH_REQUIRED=true`) |
-| Service API (optional) | `/api/external/*` — set `EXTERNAL_API_TOKEN` to require Bearer auth |
+| Data | workspaces/chat → Postgres; FAISS → `app_data` volume |
+| Auth | JWT sign-up / sign-in on `/app` (`AUTH_REQUIRED=true`) |
+| Service API (optional) | `/api/external/*` — set `EXTERNAL_API_TOKEN` for Bearer auth |
 
-DB only (local app process):
+DB only (run API + UI on the host):
 
 ```powershell
 docker compose up db -d
 $env:DATABASE_URL="postgresql://ranything:ranything@localhost:5432/ranything"
-pip install sqlalchemy psycopg2-binary
-python app.py
+pip install -r backend/requirements.txt
+copy .env.example .env
+python -m backend
 ```
 
-Migrate legacy file data to Postgres:
+In another terminal:
 
 ```powershell
-$env:DATABASE_URL="postgresql://ranything:ranything@localhost:5432/ranything"
-python scripts/migrate_to_postgres.py
+cd frontend
+npm install
+npm run dev
 ```
-
-Health check: `GET http://localhost:8000/api/health`
 
 ### Local run (no Docker)
 
-Postgres is optional — omit `DATABASE_URL` to use file storage under `DATA_DIR`.
+Postgres is optional — omit `DATABASE_URL` to use files under `DATA_DIR`.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install --upgrade pip
-pip install -r requirements.txt
-copy .env.example .env   # set GEMINI_API_KEY or Ollama
-python app.py
+pip install -r backend/requirements.txt
+copy .env.example .env
+python -m backend
 ```
-
-- **http://localhost:8000** — product site  
-- **http://localhost:8000/app** — workspace app  
-
----
-
-## Usage flow
-
-1. Open **http://localhost:8000/app** — sign up / sign in  
-2. Create a workspace → **Upload** sources (drag and drop)  
-3. On **Assembly Canvas**: click a source to add context, connect edges into Chat  
-4. Ask grounded questions; use **Studio** to pin Quiz / Flashcards / Mind map / Report on the board  
-5. **Export ZIP** for backup  
-
-### Frontend dev (Assembly Canvas)
 
 ```powershell
-cd web
+cd frontend
 npm install
-npm run dev          # http://localhost:5173/app/ (proxies /api → :8000)
-npm run build        # → src/rag_app/static/web
+npm run dev          # http://localhost:3000 — proxies /api → :8000
+```
+
+Production UI (after `npm run build`):
+
+```powershell
+cd frontend
+npm run build
+npm start            # http://localhost:3000
 ```
 
 ---
 
-## Standalone — no other project deps
+## Usage
 
-| Required to run solo | Not required |
-|----------------------|--------------|
-| Python deps (`requirements.txt`) | AgenThink |
-| (Optional) Postgres via `docker compose up db` | dOCRead |
-| Gemini key **or** Ollama/vLLM **or** local Qwen | VirtuaLook / SketClothes |
-| HF models (embedding + reranker, downloaded on first run) | Sibling ecosystem ports |
-
-`/api/external/*` is an optional API for other services to call RAnythinG — **not** a runtime dependency.
-
-GitHub repo: https://github.com/lqb464/RAnythinG
+1. Open **/app** — sign up / sign in
+2. Create a workspace → upload sources
+3. On Assembly Canvas: add sources to context, connect to Chat
+4. Ask grounded questions; pin Studio artifacts (quiz, flashcards, mind map, report)
+5. Export ZIP for backup
 
 ---
 
-## Marketing pages
+## Self-contained
+
+No sibling ML services required. OCR is in-process Docling; vectors are local FAISS; LLM is your Gemini key, Ollama/vLLM, or a local instruct model.
+
+`/api/external/*` is an optional API for other apps to call RAnythinG — not a runtime dependency.
+
+Repo: https://github.com/lqb464/RAnythinG
+
+---
+
+## Site routes
 
 | URL | Content |
 |-----|---------|
 | `/` | Home |
 | `/features` | Features |
-| `/use-cases` | Industry use cases |
-| `/guide` | Install & usage guide |
+| `/use-cases` | Use cases |
+| `/guide` | Install & usage |
 | `/pricing` | Pricing |
-| `/compare` | Compare vs NotebookLM / ChatGPT |
+| `/compare` | Comparison |
 | `/changelog` | Changelog |
 | `/about` | About & roadmap |
+| `/app` | Workspace list |
+| `/app/[notebookId]` | Open workspace |
 
 ---
 
-## RAG architecture
+## RAG stack
 
 | Component | Role |
 |-----------|------|
@@ -138,39 +156,27 @@ GitHub repo: https://github.com/lqb464/RAnythinG
 | Reranker | `BAAI/bge-reranker-v2-m3` |
 | Generation | Gemini (if API key) / `Qwen/Qwen2.5-1.5B-Instruct` + extractive fallback |
 | Parsing | Docling (PDF/DOCX) + PyPDF2 / python-docx fallback |
-| GraphRAG | Graph mode UI (build on demand); auto-index off by default (`ENABLE_GRAPH_RAG=false`) |
+| GraphRAG | Graph mode UI (on demand); auto-index off by default (`ENABLE_GRAPH_RAG=false`) |
 
-### Key files
+### Main backend modules
 
-| File | Description |
-|------|-------------|
-| `app.py` | FastAPI entrypoint |
-| `src/rag_app/server.py` | Workspace API, chat/stream, Studio, notes |
-| `src/rag_app/core.py` | RAG engine + Studio tools |
-| `src/rag_app/retrieval.py` | Hybrid retrieval, rewrite, rerank |
-| `src/rag_app/synthesis.py` | Answer / Studio content generation |
-| `src/rag_app/chunking.py` | Semantic chunking |
-| `src/rag_app/graph_rag.py` | GraphRAG (entity / community) |
-| `src/rag_app/parsers.py` | PDF/DOCX/PPTX/… parsing |
-| `src/rag_app/static/app.html` | Legacy notebook UI fallback |
-| `web/` | Assembly Canvas + Graph mode (Vite/React → `static/web/`) |
+| File | Role |
+|------|------|
+| `backend/server.py` | HTTP API |
+| `backend/core.py` | RAG agent + Studio tools |
+| `backend/retrieval.py` | Hybrid retrieval, rewrite, rerank |
+| `backend/synthesis.py` | Answer / Studio generation |
+| `backend/chunking.py` | Chunking |
+| `backend/graph_rag.py` | GraphRAG |
+| `backend/parsers.py` | Document parsers |
 
 ---
 
 ## CLI (optional)
 
 ```powershell
-python -m src.rag_app.cli build --source-folder ./docs --output-dir ./data
-python -m src.rag_app.cli query --index-path ./data/rag_index.faiss --metadata-path ./data/rag_index.faiss.json --query "What is the main topic?"
+python -m backend.cli build --source-folder ./docs --output-dir ./data
+python -m backend.cli query --index-path ./data/rag_index.faiss --metadata-path ./data/rag_index.faiss.json --query "What is the main topic?"
 ```
 
-> Note: `assets/` holds README demo images; do not confuse it with `--source-folder ./docs` when building a document index.
-
----
-
-## Tests
-
-```powershell
-pip install -r requirements-dev.txt
-python -m pytest
-```
+`assets/` is for README screenshots only — not the same as `--source-folder ./docs`.
