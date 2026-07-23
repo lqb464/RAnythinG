@@ -1,6 +1,6 @@
 /** API client for RAnythinG backend */
 
-const TOKEN_KEY = 'rananything_token'
+const TOKEN_KEY = 'ranything_token'
 
 export function getToken(): string {
   return localStorage.getItem(TOKEN_KEY) || ''
@@ -12,7 +12,7 @@ export function setToken(token: string) {
 
 export function clearToken() {
   localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem('rananything_refresh')
+  localStorage.removeItem('ranything_refresh')
 }
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -86,11 +86,31 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ use_llm, max_nodes: 60 }),
     }),
+  clearGraph: (id: string) =>
+    request<GraphView>(`/api/notebooks/${id}/graph`, { method: 'DELETE' }),
+  deleteNotebook: (id: string) =>
+    request<{ ok: boolean }>(`/api/notebooks/${id}`, { method: 'DELETE' }),
   askGraphEntity: (id: string, entity_id: string, question = '') =>
     request<{ answer: string; sources: { source: string; text: string }[] }>(
       `/api/notebooks/${id}/graph/ask`,
       { method: 'POST', body: JSON.stringify({ entity_id, question }) },
     ),
+  getAssembly: (id: string) =>
+    request<AssemblyBoard>(`/api/notebooks/${id}/assembly`),
+  saveAssembly: (id: string, board: AssemblyBoard) =>
+    request<AssemblyBoard>(`/api/notebooks/${id}/assembly`, {
+      method: 'PUT',
+      body: JSON.stringify(board),
+    }),
+}
+
+export type AssemblyBoard = {
+  nodes?: unknown[]
+  edges?: unknown[]
+  context?: string[]
+  messages?: { role: 'user' | 'bot'; text: string; cites?: string[] }[]
+  viewport?: { x: number; y: number; zoom: number } | null
+  updated_at?: string
 }
 
 export type GraphNode = {

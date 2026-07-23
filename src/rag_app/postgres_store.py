@@ -67,7 +67,7 @@ def list_notebooks(owner_id: Optional[str] = None) -> List[dict]:
 
 
 def create_notebook(
-    name: str = "Notebook mới",
+    name: str = "Workspace mới",
     notebook_id: Optional[str] = None,
     owner_id: Optional[str] = None,
 ) -> dict:
@@ -75,7 +75,7 @@ def create_notebook(
     now = _now()
     row = NotebookRow(
         id=nb_id,
-        name=name.strip() or "Notebook mới",
+        name=name.strip() or "Workspace mới",
         owner_id=owner_id,
         created_at=now,
         updated_at=now,
@@ -435,3 +435,40 @@ def delete_studio_output(notebook_id: str, output_id: str) -> bool:
             nb.updated_at = _now()
         db.commit()
         return True
+
+
+def _assembly_path(notebook_id: str) -> Path:
+    return _notebook_dir(notebook_id) / "assembly.json"
+
+
+def load_assembly_board(notebook_id: str) -> Optional[dict]:
+    path = _assembly_path(notebook_id)
+    if not path.exists():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def save_assembly_board(notebook_id: str, board: dict) -> dict:
+    path = _assembly_path(notebook_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "nodes": board.get("nodes") or [],
+        "edges": board.get("edges") or [],
+        "context": board.get("context") or [],
+        "messages": board.get("messages") or [],
+        "viewport": board.get("viewport"),
+        "updated_at": _now_iso(),
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    with SessionLocal() as db:
+        row = db.get(NotebookRow, notebook_id)
+        if row:
+            row.updated_at = _now()
+            db.commit()
+    return payload

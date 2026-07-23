@@ -16,7 +16,7 @@ export default function App() {
   const [notebooks, setNotebooks] = useState<NotebookMeta[]>([])
   const [active, setActive] = useState<{ id: string; name: string; sources: string[] } | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
-  const [createName, setCreateName] = useState('Notebook mới')
+  const [createName, setCreateName] = useState('Workspace mới')
   const [creating, setCreating] = useState(false)
 
   const showToast = useCallback((m: string) => {
@@ -71,7 +71,7 @@ export default function App() {
       const hash = detail.id
       if (location.hash.slice(1) !== hash) location.hash = hash
     } catch (ex) {
-      showToast(ex instanceof Error ? ex.message : 'Không mở được notebook')
+      showToast(ex instanceof Error ? ex.message : 'Không mở được workspace')
     }
   }
 
@@ -82,8 +82,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, boot])
 
+  const deleteNb = async (id: string, name: string) => {
+    if (!window.confirm(`Xóa workspace «${name}»? Toàn bộ nguồn, chat và graph sẽ mất.`)) return
+    try {
+      await api.deleteNotebook(id)
+      if (active?.id === id) {
+        setActive(null)
+        location.hash = ''
+      }
+      await loadNotebooks()
+      showToast('Đã xóa workspace')
+    } catch (ex) {
+      showToast(ex instanceof Error ? ex.message : 'Xóa thất bại')
+    }
+  }
+
   const openCreate = () => {
-    setCreateName('Notebook mới')
+    setCreateName('Workspace mới')
     setCreateOpen(true)
   }
 
@@ -98,7 +113,7 @@ export default function App() {
       await loadNotebooks()
       await openNb(meta.id)
     } catch (ex) {
-      showToast(ex instanceof Error ? ex.message : 'Không tạo được notebook')
+      showToast(ex instanceof Error ? ex.message : 'Không tạo được workspace')
     } finally {
       setCreating(false)
     }
@@ -127,7 +142,7 @@ export default function App() {
         <div className="auth-screen">
           <form className="auth-card" onSubmit={submitAuth}>
             <h1>{mode === 'login' ? 'Đăng nhập' : 'Tạo tài khoản'}</h1>
-            <p>RAnythinG Assembly Canvas — notebook riêng tư</p>
+            <p>RAnythinG Assembly Canvas — workspace riêng tư</p>
             <label>
               Email
               <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -188,20 +203,33 @@ export default function App() {
       </header>
       <div className="home-screen">
         <div className="home-card home-wide">
-          <h1>Notebooks</h1>
-          <p>Tạo notebook → upload nguồn → kéo lắp trên canvas → Studio artifact tương tác.</p>
+          <h1>Workspaces</h1>
+          <p>Tạo workspace → upload nguồn → kéo lắp trên canvas → Studio artifact tương tác.</p>
           <button className="btn btn-primary" onClick={openCreate}>
-            + Tạo notebook
+            + Tạo workspace
           </button>
           <div className="nb-grid">
             {notebooks.map((nb) => (
-              <button key={nb.id} className="nb-item" onClick={() => openNb(nb.id)}>
-                <strong>{nb.name}</strong>
-                <span>{nb.source_count ?? 0} nguồn · {nb.id}</span>
-              </button>
+              <div key={nb.id} className="nb-item-wrap">
+                <button type="button" className="nb-item" onClick={() => openNb(nb.id)}>
+                  <strong>{nb.name}</strong>
+                  <span>{nb.source_count ?? 0} nguồn · {nb.id}</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm nb-del"
+                  title="Xóa workspace"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    deleteNb(nb.id, nb.name)
+                  }}
+                >
+                  Xóa
+                </button>
+              </div>
             ))}
           </div>
-          {!notebooks.length && <p className="muted">Chưa có notebook — tạo cái đầu tiên.</p>}
+          {!notebooks.length && <p className="muted">Chưa có workspace — tạo cái đầu tiên.</p>}
         </div>
       </div>
       {createOpen && (
@@ -217,17 +245,17 @@ export default function App() {
             onClick={(ev) => ev.stopPropagation()}
             onSubmit={createNb}
           >
-            <h2 id="create-nb-title">Tạo notebook</h2>
+            <h2 id="create-nb-title">Tạo workspace</h2>
             <p>Đặt tên workspace để upload nguồn và hỏi đáp.</p>
             <label>
-              Tên notebook
+              Tên workspace
               <input
                 autoFocus
                 required
                 maxLength={120}
                 value={createName}
                 onChange={(e) => setCreateName(e.target.value)}
-                placeholder="Notebook mới"
+                placeholder="Workspace mới"
               />
             </label>
             <div className="modal-actions">

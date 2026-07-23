@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Background,
   Controls,
-  MiniMap,
   ReactFlow,
   Handle,
   Position,
+  MarkerType,
   type Node,
   type Edge,
   type NodeProps,
@@ -22,21 +22,20 @@ function EntityNode({ data }: NodeProps) {
     community?: number | null
     chunk_count?: number
     selected?: boolean
+    dimmed?: boolean
   }
   const color = COMM_COLORS[(d.community ?? 0) % COMM_COLORS.length]
   return (
     <div
-      className={`rf-node entity${d.selected ? ' selected' : ''}`}
-      style={{ borderColor: color, minWidth: 140, maxWidth: 200 }}
+      className={`rf-node entity entity-compact${d.selected ? ' selected' : ''}${d.dimmed ? ' dimmed' : ''}`}
+      style={{ borderColor: color }}
     >
-      <Handle type="target" position={Position.Left} />
+      <Handle type="target" position={Position.Left} className="entity-handle" />
       <div className="hd" style={{ color }}>
         {d.label}
       </div>
-      <div className="bd" style={{ fontSize: '0.72rem' }}>
-        {d.entity_type || 'concept'} · {d.chunk_count ?? 0} chunks
-      </div>
-      <Handle type="source" position={Position.Right} />
+      <div className="bd">{d.chunk_count ?? 0} chunks</div>
+      <Handle type="source" position={Position.Right} className="entity-handle" />
     </div>
   )
 }
@@ -52,9 +51,11 @@ export function GraphMode({ notebookId, onToast }: Props) {
   const [view, setView] = useState<GraphView | null>(null)
   const [busy, setBusy] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
+  const [focusComm, setFocusComm] = useState<number | null>(null)
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
   const [asking, setAsking] = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -69,14 +70,16 @@ export function GraphMode({ notebookId, onToast }: Props) {
     load()
   }, [load])
 
-  const build = async (useLlm: boolean) => {
+  const build = async () => {
     setBusy(true)
     setAnswer('')
+    setSelected(null)
+    setFocusComm(null)
     try {
-      const g = await api.buildGraph(notebookId, useLlm)
+      const g = await api.buildGraph(notebookId, true)
       setView(g)
       onToast(
-        `Graph: ${g.build?.entities ?? g.node_count ?? 0} entities · ${g.build?.relations ?? g.edge_count ?? 0} relations`,
+        `Graph: ${g.build?.entities ?? g.node_count ?? 0} entities · ${g.build?.relations ?? g.edge_count ?? 0} quan hệ`,
       )
     } catch (e) {
       onToast(e instanceof Error ? e.message : 'Build graph lỗi')
@@ -85,34 +88,71 @@ export function GraphMode({ notebookId, onToast }: Props) {
     }
   }
 
+  const clear = async () => {
+    setConfirmClear(false)
+    if (!view?.built) return
+    setBusy(true)
+    setAnswer('')
+    setSelected(null)
+    setFocusComm(null)
+    try {
+      const g = await api.clearGraph(notebookId)
+      setView(g)
+      onToast('Đã xóa graph')
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : 'Xóa graph lỗi')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const nodes: Node[] = useMemo(() => {
     if (!view?.nodes?.length) return []
-    return view.nodes.map((n) => ({
-      id: n.id,
-      type: 'entity',
-      position: n.position || { x: 0, y: 0 },
-      data: {
-        label: n.label,
-        entity_type: n.entity_type,
-        community: n.community,
-        chunk_count: n.chunk_count,
-        selected: selected === n.id,
-      },
-    }))
-  }, [view, selected])
+    return view.nodes.map((n) => {
+      const dimmed = focusComm != null && n.community !== focusComm
+      return {
+        id: n.id,
+        type: 'entity',
+        position: n.position || { x: 0, y: 0 },
+        data: {
+          label: n.label,
+          entity_type: n.entity_type,
+          community: n.community,
+          chunk_count: n.chunk_count,
+          selected: selected === n.id,
+          dimmed,
+        },
+      }
+    })
+  }, [view, selected, focusComm])
 
   const edges: Edge[] = useMemo(() => {
     if (!view?.edges?.length) return []
-    return view.edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      label: e.label,
-      animated: false,
-      style: { stroke: '#334155' },
-      labelStyle: { fill: '#94a3b8', fontSize: 10 },
-    }))
-  }, [view])
+    const keep =
+      focusComm == null
+        ? null
+        : new Set(view.nodes.filter((n) => n.community === focusComm).map((n) => n.id))
+    return view.edges
+      .filter((e) => !keep || (keep.has(e.source) && keep.has(e.target)))
+      .map((e) => {
+        const hasLabel = !!(e.label && e.label.trim() && e.label.toLowerCase() !== 'co-occurs')
+        return {
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          // Never paint edge labels on canvas — they clutter into "co-occurs" soup
+          label: undefined,
+          animated: false,
+          style: {
+            stroke: hasLabel ? 'rgba(0, 149, 255, 0.45)' : 'rgba(51, 65, 85, 0.55)',
+            strokeWidth: hasLabel ? 1.5 : 1,
+          },
+          markerEnd: hasLabel
+            ? { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'rgba(0, 149, 255, 0.55)' }
+            : undefined,
+        }
+      })
+  }, [view, focusComm])
 
   const ask = async () => {
     if (!selected) {
@@ -130,25 +170,50 @@ export function GraphMode({ notebookId, onToast }: Props) {
     }
   }
 
-  const selectedLabel = view?.nodes.find((n) => n.id === selected)?.label
+  const selectedNode = view?.nodes.find((n) => n.id === selected)
+  const relatedEdges =
+    selected && view?.edges
+      ? view.edges.filter((e) => e.source === selected || e.target === selected).slice(0, 8)
+      : []
 
   return (
     <div className="graph-mode">
       <div className="graph-toolbar">
-        <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => build(true)}>
-          {busy ? 'Đang build…' : 'Build Graph (LLM)'}
-        </button>
-        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => build(false)}>
-          Build nhanh (rule)
-        </button>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={load}>
-          Refresh
-        </button>
-        <span className="muted">
-          {view?.built
-            ? `${view.node_count ?? 0} nodes · ${view.edge_count ?? 0} edges · ${view.communities?.length ?? 0} communities`
-            : view?.message || 'Chưa build — bấm Build Graph'}
-        </span>
+        <div className="graph-toolbar-left">
+          {view?.built ? (
+            <>
+              <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={build}>
+                {busy ? 'Đang build…' : 'Build lại'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={busy}
+                onClick={() => setConfirmClear(true)}
+              >
+                Xóa graph
+              </button>
+            </>
+          ) : null}
+        </div>
+        <div className="graph-stats">
+          {view?.built ? (
+            <>
+              <span>{view.node_count ?? 0} entities</span>
+              <span className="dot">·</span>
+              <span>{view.edge_count ?? 0} links</span>
+              <span className="dot">·</span>
+              <span>{view.communities?.length ?? 0} communities</span>
+            </>
+          ) : (
+            <span className="muted">{view?.message || 'Chưa có graph'}</span>
+          )}
+        </div>
+        {focusComm != null && (
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setFocusComm(null)}>
+            Bỏ lọc C{focusComm}
+          </button>
+        )}
       </div>
 
       <div className="graph-body">
@@ -159,57 +224,112 @@ export function GraphMode({ notebookId, onToast }: Props) {
               edges={edges}
               nodeTypes={entityTypes}
               fitView
-              fitViewOptions={{ padding: 0.35, maxZoom: 1 }}
-              minZoom={0.2}
-              maxZoom={1.75}
+              fitViewOptions={{ padding: 0.28, maxZoom: 0.95 }}
+              minZoom={0.15}
+              maxZoom={1.6}
+              nodesConnectable={false}
+              elementsSelectable
               onNodeClick={(_, n) => setSelected(n.id)}
+              onPaneClick={() => setSelected(null)}
               proOptions={{ hideAttribution: true }}
+              defaultEdgeOptions={{ type: 'default' }}
             >
-              <Background gap={20} color="#1e293b" />
+              <Background gap={22} color="#1a2332" />
               <Controls showInteractive={false} />
-              <MiniMap
-                maskColor="rgba(6, 10, 18, 0.7)"
-                nodeColor="#1e3a5f"
-                style={{ background: '#0b1220' }}
-              />
             </ReactFlow>
           ) : (
             <div className="graph-empty">
-              <p>Knowledge graph trống.</p>
-              <p className="muted">Upload tài liệu rồi bấm Build Graph để trích entity · quan hệ · community.</p>
+              <h3>Knowledge graph</h3>
+              <p className="muted">
+                Build Graph để trích entity và quan hệ từ tài liệu đã upload. Sau đó click node để hỏi.
+              </p>
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={build}>
+                {busy ? 'Đang build…' : 'Build Graph'}
+              </button>
             </div>
           )}
         </div>
 
         <aside className="graph-side">
-          <h3>Ask from node</h3>
-          <p className="muted text-sm">
-            {selectedLabel ? `Đang chọn: ${selectedLabel}` : 'Click entity trên graph'}
-          </p>
-          <textarea
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            placeholder="Để trống = giải thích khái niệm này…"
-            rows={3}
-          />
-          <button type="button" className="btn btn-primary" disabled={!selected || asking} onClick={ask}>
-            {asking ? 'Đang hỏi…' : 'Hỏi về entity'}
-          </button>
-          {answer && <div className="bubble mt-2">{answer}</div>}
+          <section className="graph-panel">
+            <h3>Entity</h3>
+            {selectedNode ? (
+              <>
+                <p className="entity-picked">{selectedNode.label}</p>
+                <p className="muted text-sm">
+                  {(selectedNode.entity_type || 'concept') +
+                    ` · ${selectedNode.chunk_count ?? 0} chunks` +
+                    (selectedNode.community != null ? ` · C${selectedNode.community}` : '')}
+                </p>
+                {relatedEdges.length > 0 && (
+                  <ul className="rel-list">
+                    {relatedEdges.map((e) => {
+                      const otherId = e.source === selected ? e.target : e.source
+                      const other = view?.nodes.find((n) => n.id === otherId)?.label || otherId
+                      const rel = e.label?.trim() && e.label.toLowerCase() !== 'co-occurs' ? e.label : 'liên quan'
+                      return (
+                        <li key={e.id}>
+                          <button type="button" className="linkish" onClick={() => setSelected(otherId)}>
+                            {rel} → {other}
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+                <textarea
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  placeholder="Hỏi về entity này (để trống = giải thích)…"
+                  rows={3}
+                />
+                <button type="button" className="btn btn-primary" disabled={asking} onClick={ask}>
+                  {asking ? 'Đang hỏi…' : 'Hỏi về entity'}
+                </button>
+                {answer && <div className="bubble mt-2">{answer}</div>}
+              </>
+            ) : (
+              <p className="muted text-sm">Click một node trên graph để xem quan hệ và hỏi đáp.</p>
+            )}
+          </section>
 
-          <h3 className="section-gap">Communities</h3>
-          <div className="comm-list">
-            {(view?.communities || []).slice(0, 8).map((c) => (
-              <div key={c.id} className="comm-card">
-                <strong style={{ color: COMM_COLORS[c.id % COMM_COLORS.length] }}>C{c.id}</strong>
-                <span className="muted"> · {(c.entity_names || []).slice(0, 4).join(', ')}</span>
-                <p>{c.summary?.slice(0, 180) || '—'}</p>
-              </div>
-            ))}
-            {!view?.communities?.length && <p className="muted">Chưa có community</p>}
-          </div>
+          <section className="graph-panel">
+            <h3>Communities</h3>
+            <div className="comm-list">
+              {(view?.communities || []).slice(0, 10).map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className={`comm-card${focusComm === c.id ? ' active' : ''}`}
+                  onClick={() => setFocusComm((cur) => (cur === c.id ? null : c.id))}
+                >
+                  <strong style={{ color: COMM_COLORS[c.id % COMM_COLORS.length] }}>C{c.id}</strong>
+                  <span className="muted"> · {(c.entity_names || []).slice(0, 3).join(', ')}</span>
+                  <p>{c.summary?.slice(0, 140) || '—'}</p>
+                </button>
+              ))}
+              {!view?.communities?.length && <p className="muted text-sm">Chưa có community</p>}
+            </div>
+          </section>
         </aside>
       </div>
+
+      {confirmClear && (
+        <div className="modal-backdrop" role="presentation" onClick={() => !busy && setConfirmClear(false)}>
+          <div className="modal-card" role="dialog" onClick={(e) => e.stopPropagation()}>
+            <h2>Xóa knowledge graph?</h2>
+            <p>Chỉ xóa entity graph. Tài liệu nguồn và chat Assembly vẫn giữ.</p>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => setConfirmClear(false)}>
+                Hủy
+              </button>
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={clear}>
+                Xóa graph
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

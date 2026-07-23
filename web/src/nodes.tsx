@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from 'react'
+import { createContext, memo, useCallback, useContext, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { FlashcardsWidget, MindMapWidget, QuizWidget, ReportWidget } from './widgets'
 
@@ -6,7 +6,6 @@ export type SourceNodeData = { filename: string; inContext?: boolean }
 export type ChatNodeData = {
   notebookId: string
   contextSources: string[]
-  onAsk?: (q: string) => Promise<void>
   messages?: { role: 'user' | 'bot'; text: string; cites?: string[] }[]
   busy?: boolean
 }
@@ -16,11 +15,14 @@ export type ArtifactNodeData = {
   payload: Record<string, unknown>
 }
 
+/** Keep ask handler out of node.data — functions in RF node data crash connection UX. */
+export const AskContext = createContext<(q: string) => Promise<void>>(async () => {})
+
 function SourceNode({ data }: NodeProps) {
   const d = data as SourceNodeData
   return (
     <div className={`rf-node source${d.inContext ? ' active' : ''}`}>
-      <Handle type="source" position={Position.Right} />
+      <Handle type="source" position={Position.Right} id="out" />
       <div className="hd">Source</div>
       <div className="bd">
         {d.filename}
@@ -32,17 +34,18 @@ function SourceNode({ data }: NodeProps) {
 
 function ChatNode({ data }: NodeProps) {
   const d = data as ChatNodeData
+  const onAsk = useContext(AskContext)
   const [q, setQ] = useState('')
   const ask = useCallback(async () => {
-    if (!q.trim() || !d.onAsk) return
+    if (!q.trim()) return
     const text = q.trim()
     setQ('')
-    await d.onAsk(text)
-  }, [d, q])
+    await onAsk(text)
+  }, [onAsk, q])
 
   return (
     <div className="rf-node chat chat-wide">
-      <Handle type="target" position={Position.Left} />
+      <Handle type="target" position={Position.Left} id="in" />
       <div className="hd">Chat · grounded</div>
       <div className="bd">
         <div className="cite">
@@ -56,7 +59,18 @@ function ChatNode({ data }: NodeProps) {
             </div>
           ))}
         </div>
-        <textarea value={q} onChange={(e) => setQ(e.target.value)} placeholder="Hỏi trong ngữ cảnh đã kéo…" rows={3} />
+        <textarea
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Hỏi trong ngữ cảnh đã kéo…"
+          rows={3}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              ask()
+            }
+          }}
+        />
         <button
           type="button"
           className="btn btn-primary btn-block"
@@ -66,7 +80,7 @@ function ChatNode({ data }: NodeProps) {
           {d.busy ? 'Đang trả lời…' : 'Gửi'}
         </button>
       </div>
-      <Handle type="source" position={Position.Right} />
+      <Handle type="source" position={Position.Right} id="out" />
     </div>
   )
 }
@@ -75,7 +89,7 @@ function ArtifactNode({ data }: NodeProps) {
   const d = data as ArtifactNodeData
   return (
     <div className="rf-node artifact artifact-wide">
-      <Handle type="target" position={Position.Left} />
+      <Handle type="target" position={Position.Left} id="in" />
       <div className="hd">{d.label}</div>
       <div className="bd">
         {d.tool === 'quiz' && <QuizWidget items={(d.payload.items as QuizItem[]) || []} />}

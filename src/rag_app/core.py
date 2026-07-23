@@ -920,6 +920,11 @@ class RagAgent:
             "communities": len(self.knowledge_graph.communities),
         }
 
+    def clear_knowledge_graph(self) -> dict:
+        """Drop on-demand entity graph (sources / FAISS index stay)."""
+        self.knowledge_graph = None
+        return {"ok": True, "cleared": True}
+
     def export_graph_view(self, max_nodes: int = 60) -> dict:
         if self.knowledge_graph is None:
             return {

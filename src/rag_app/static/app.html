@@ -12,7 +12,7 @@
   <div id="authOverlay" class="auth-overlay hidden">
     <form id="authForm" class="auth-card" data-mode="login">
       <h2 id="authTitle">Đăng nhập</h2>
-      <p class="auth-sub">RAnythinG · notebook riêng tư theo tài khoản</p>
+      <p class="auth-sub">RAnythinG · workspace riêng tư theo tài khoản</p>
       <label>Email<input id="authEmail" type="email" required autocomplete="username" /></label>
       <label>Mật khẩu<input id="authPassword" type="password" required minlength="6" autocomplete="current-password" /></label>
       <button type="submit" class="btn-primary" id="authSubmit">Đăng nhập</button>
@@ -66,16 +66,16 @@
         <h1 class="hero-title hero-title-sm" aria-label="RAnythinG">
           <span class="ht-r">R</span><span class="ht-any">AnythinG</span>
         </h1>
-        <p class="hero-sub">Notebook của bạn</p>
+        <p class="hero-sub">Workspace của bạn</p>
 
-        <p class="hero-tag">Tạo notebook, upload tài liệu, hỏi đáp có trích dẫn — mọi thứ chạy local.</p>
+        <p class="hero-tag">Tạo workspace, upload tài liệu, hỏi đáp có trích dẫn — mọi thứ chạy local.</p>
 
-        <button class="btn-primary btn-hero" id="btnCreateNb">➕ Tạo Notebook mới</button>
+        <button class="btn-primary btn-hero" id="btnCreateNb">➕ Tạo Workspace mới</button>
       </section>
 
       <section class="home-notebooks">
         <div class="home-nb-head">
-          <h2 class="section-label">Notebook của bạn</h2>
+          <h2 class="section-label">Workspace của bạn</h2>
           <span class="nb-count" id="nbCount"></span>
         </div>
         <div id="notebookGrid" class="notebook-grid"></div>
@@ -86,9 +86,9 @@
   <!-- WORKSPACE — khung cố định full viewport -->
   <div id="view-workspace" class="view">
     <header class="ws-header">
-      <button class="btn-ghost" id="btnHome">← Notebook</button>
+      <button class="btn-ghost" id="btnHome">← Workspace</button>
       <a href="/" class="ws-brand" title="Trang sản phẩm">RAnythinG</a>
-      <input class="ws-title" id="nbTitle" placeholder="Tên notebook" />
+      <input class="ws-title" id="nbTitle" placeholder="Tên workspace" />
       <button type="button" class="btn-ghost" id="btnExportNb" title="Export ZIP">Export</button>
       <span class="ws-status" id="wsStatus"><span class="dot"></span><span id="statusText">—</span></span>
     </header>

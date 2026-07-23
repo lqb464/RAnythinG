@@ -158,11 +158,19 @@ async def auth_me(user: AuthUser = Depends(require_user)):
 
 
 class NotebookCreate(BaseModel):
-    name: str = "Notebook mới"
+    name: str = "Workspace mới"
 
 
 class NotebookRename(BaseModel):
     name: str
+
+
+class AssemblyBoardBody(BaseModel):
+    nodes: list = Field(default_factory=list)
+    edges: list = Field(default_factory=list)
+    context: list = Field(default_factory=list)
+    messages: list = Field(default_factory=list)
+    viewport: Optional[dict] = None
 
 
 class ChatRequest(BaseModel):
@@ -332,6 +340,23 @@ async def rename_notebook(notebook_id: str, body: NotebookRename, user: AuthUser
     _require_notebook(notebook_id, user)
     store.update_notebook_name(notebook_id, body.name)
     return store.get_notebook(notebook_id)
+
+
+@app.get("/api/notebooks/{notebook_id}/assembly")
+async def get_assembly_board(notebook_id: str, user: AuthUser = Depends(require_user)):
+    _require_notebook(notebook_id, user)
+    board = store.load_assembly_board(notebook_id)
+    return board or {"nodes": [], "edges": [], "context": [], "messages": [], "viewport": None}
+
+
+@app.put("/api/notebooks/{notebook_id}/assembly")
+async def put_assembly_board(
+    notebook_id: str,
+    body: AssemblyBoardBody,
+    user: AuthUser = Depends(require_user),
+):
+    _require_notebook(notebook_id, user)
+    return store.save_assembly_board(notebook_id, body.model_dump())
 
 
 @app.delete("/api/notebooks/{notebook_id}")
@@ -705,6 +730,24 @@ async def build_graph(
     return view
 
 
+@app.delete("/api/notebooks/{notebook_id}/graph")
+async def clear_graph(notebook_id: str, user: AuthUser = Depends(require_user)):
+    """Clear entity graph for this workspace (sources & RAG index kept)."""
+    _require_notebook(notebook_id, user)
+    agent = await agent_cache.async_get_agent(notebook_id)
+
+    def _clear():
+        result = agent.clear_knowledge_graph()
+        store.persist_index(notebook_id, agent)
+        return result
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _clear)
+    view = agent.export_graph_view()
+    view["cleared"] = True
+    return view
+
+
 @app.post("/api/notebooks/{notebook_id}/graph/ask")
 async def ask_graph_entity(
     notebook_id: str,
@@ -754,7 +797,7 @@ async def export_notebook(notebook_id: str, user: AuthUser = Depends(require_use
     return StreamingResponse(
         buf,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="rananything-{safe}.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="ranything-{safe}.zip"'},
     )
 
 

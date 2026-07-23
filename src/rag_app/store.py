@@ -31,5 +31,7 @@ append_chat_message = getattr(_backend, "append_chat_message", None)
 load_studio_outputs = getattr(_backend, "load_studio_outputs", lambda *a: [])
 save_studio_output = getattr(_backend, "save_studio_output", lambda *a, **k: {})
 delete_studio_output = getattr(_backend, "delete_studio_output", lambda *a: False)
+load_assembly_board = getattr(_backend, "load_assembly_board", lambda *a: None)
+save_assembly_board = getattr(_backend, "save_assembly_board", lambda *a, **k: {})
 
 backend_name = "postgresql" if USE_POSTGRES else "filesystem"

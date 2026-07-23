@@ -1,30 +1,30 @@
 services:
   db:
     image: pgvector/pgvector:pg16
-    container_name: rananything-db
+    container_name: ranything-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: rananything
-      POSTGRES_PASSWORD: rananything
-      POSTGRES_DB: rananything
+      POSTGRES_USER: ranything
+      POSTGRES_PASSWORD: ranything
+      POSTGRES_DB: ranything
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rananything -d rananything"]
+      test: ["CMD-SHELL", "pg_isready -U ranything -d ranything"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   app:
     build: .
-    container_name: rananything-app
+    container_name: ranything-app
     restart: unless-stopped
     ports:
       - "${PORT:-8000}:8000"
     environment:
-      DATABASE_URL: postgresql://rananything:rananything@db:5432/rananything
+      DATABASE_URL: postgresql://ranything:ranything@db:5432/ranything
       DATA_DIR: /data
       HOST: 0.0.0.0
       PORT: 8000

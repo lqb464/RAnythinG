@@ -4,7 +4,7 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 let notebookId = null;
 let selectedSources = new Set();
 let indexed = false;
-let authToken = localStorage.getItem("rananything_token") || "";
+let authToken = localStorage.getItem("ranything_token") || "";
 let authUser = null;
 
 function authHeaders(extra = {}) {
@@ -41,8 +41,8 @@ async function api(path, opts = {}) {
 function clearAuth() {
   authToken = "";
   authUser = null;
-  localStorage.removeItem("rananything_token");
-  localStorage.removeItem("rananything_refresh");
+  localStorage.removeItem("ranything_token");
+  localStorage.removeItem("ranything_refresh");
 }
 
 function showAuth(show) {
@@ -1358,8 +1358,8 @@ $("#authForm")?.addEventListener("submit", async (e) => {
       return res.json();
     });
     authToken = data.access_token;
-    localStorage.setItem("rananything_token", authToken);
-    if (data.refresh_token) localStorage.setItem("rananything_refresh", data.refresh_token);
+    localStorage.setItem("ranything_token", authToken);
+    if (data.refresh_token) localStorage.setItem("ranything_refresh", data.refresh_token);
     authUser = data.user;
     showAuth(false);
     toast(mode === "register" ? "Đăng ký thành công" : "Đăng nhập thành công");
@@ -1392,7 +1392,7 @@ $("#btnExportNb")?.addEventListener("click", async () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `rananything-${notebookId}.zip`;
+    a.download = `ranything-${notebookId}.zip`;
     a.click();
     URL.revokeObjectURL(url);
     toast("Đã export notebook");

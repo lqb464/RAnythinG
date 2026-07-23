@@ -8,7 +8,7 @@ from pathlib import Path
 
 if not os.getenv("DATABASE_URL"):
     print("Set DATABASE_URL trước:")
-    print("  $env:DATABASE_URL='postgresql://rananything:rananything@localhost:5432/rananything'")
+    print("  $env:DATABASE_URL='postgresql://ranything:ranything@localhost:5432/ranything'")
     sys.exit(1)
 
 from src.rag_app.database import NotebookRow, SessionLocal, init_db

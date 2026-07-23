@@ -16,7 +16,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://rananything:rananything@localhost:5432/rananything",
+    "postgresql://ranything:ranything@localhost:5432/ranything",
 )
 
 # External project ids (e.g. user_<id>) need headroom beyond short notebook keys.

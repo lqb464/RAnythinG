@@ -67,7 +67,7 @@ def list_notebooks(owner_id: Optional[str] = None) -> List[dict]:
 
 
 def create_notebook(
-    name: str = "Notebook mới",
+    name: str = "Workspace mới",
     notebook_id: Optional[str] = None,
     owner_id: Optional[str] = None,
 ) -> dict:
@@ -78,7 +78,7 @@ def create_notebook(
 
     meta = {
         "id": notebook_id,
-        "name": name.strip() or "Notebook mới",
+        "name": name.strip() or "Workspace mới",
         "owner_id": owner_id,
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
@@ -293,6 +293,28 @@ def _save_json(path: Path, data) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _assembly_path(notebook_id: str) -> Path:
+    return NOTEBOOKS_ROOT / notebook_id / "assembly.json"
+
+
+def load_assembly_board(notebook_id: str) -> Optional[dict]:
+    return _load_json(_assembly_path(notebook_id), None)
+
+
+def save_assembly_board(notebook_id: str, board: dict) -> dict:
+    payload = {
+        "nodes": board.get("nodes") or [],
+        "edges": board.get("edges") or [],
+        "context": board.get("context") or [],
+        "messages": board.get("messages") or [],
+        "viewport": board.get("viewport"),
+        "updated_at": _now_iso(),
+    }
+    _save_json(_assembly_path(notebook_id), payload)
+    _touch(notebook_id)
+    return payload
 
 
 # ---------------------------------------------------------------------------

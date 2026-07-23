@@ -1,7 +1,7 @@
 [project]
-name = "rag_notebooklm"
+name = "ranything"
 version = "0.1.0"
-description = "Local NotebookLM-style RAG app with document upload, hybrid FAISS+BM25 retrieval, GraphRAG, and a FastAPI + HTML/CSS/JS UI."
+description = "RAnythinG — local privacy-first RAG with Assembly Canvas workspaces, hybrid FAISS+BM25 retrieval, on-demand GraphRAG, Studio artifacts, and a FastAPI + React UI."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -485,7 +485,11 @@ def export_knowledge_graph_view(
         if s not in keep or t not in keep or s == t:
             continue
         a, b = (s, t) if s < t else (t, s)
-        fingerprint = (a, b, rel.relation.lower())
+        rel_label = (rel.relation or "").strip()
+        # Skip noisy co-occurrence labels from LLM/rule dumps
+        if rel_label.lower() in {"co-occurs", "cooccurs", "co-occur", "related", "related_to"}:
+            rel_label = ""
+        fingerprint = (a, b, rel_label.lower() or "_")
         if fingerprint in seen_edges:
             continue
         seen_edges.add(fingerprint)
@@ -495,46 +499,54 @@ def export_knowledge_graph_view(
                 "id": f"e-{s}-{t}-{len(edge_payload)}",
                 "source": s,
                 "target": t,
-                "label": rel.relation,
+                "label": rel_label,
+                "kind": "relation" if rel_label else "link",
             }
         )
 
-    # Co-occurrence edges when few explicit relations
-    if len(edge_payload) < max(3, len(keep) // 4):
+    # Sparse unlabeled co-occurrence links only when graph would be disconnected
+    if len(edge_payload) < max(2, len(keep) // 5):
+        pair_budget = min(len(keep), max_nodes)
         for key in list(keep):
-            for other in graph.entity_to_chunks.get(key, set()):
-                for peer in graph.chunk_to_entities.get(other, set()):
-                    if peer in keep and peer != key:
-                        a, b = (key, peer) if key < peer else (peer, key)
-                        fingerprint = (a, b, "co-occurs")
-                        if fingerprint in seen_edges:
-                            continue
-                        seen_edges.add(fingerprint)
-                        nx_graph.add_edge(key, peer)
-                        edge_payload.append(
-                            {
-                                "id": f"e-{a}-{b}-co",
-                                "source": key,
-                                "target": peer,
-                                "label": "co-occurs",
-                            }
-                        )
-                        if len(edge_payload) >= max_nodes * 2:
-                            break
-                if len(edge_payload) >= max_nodes * 2:
-                    break
-            if len(edge_payload) >= max_nodes * 2:
+            if pair_budget <= 0:
                 break
+            peers = []
+            for chunk_idx in graph.entity_to_chunks.get(key, set()):
+                peers.extend(graph.chunk_to_entities.get(chunk_idx, set()))
+            for peer in peers:
+                if peer not in keep or peer == key:
+                    continue
+                a, b = (key, peer) if key < peer else (peer, key)
+                fingerprint = (a, b, "_")
+                if fingerprint in seen_edges:
+                    continue
+                seen_edges.add(fingerprint)
+                nx_graph.add_edge(key, peer)
+                edge_payload.append(
+                    {
+                        "id": f"e-{a}-{b}-co",
+                        "source": key,
+                        "target": peer,
+                        "label": "",
+                        "kind": "cooccur",
+                    }
+                )
+                pair_budget -= 1
+                if pair_budget <= 0:
+                    break
+
+    # Cap edges so UI stays readable
+    edge_payload = edge_payload[: max(len(keep), max_nodes)]
 
     positions: Dict[str, Tuple[float, float]] = {}
     if nx_graph.number_of_nodes() > 0:
         try:
-            raw_pos = nx.spring_layout(nx_graph, k=1.2, seed=42, iterations=40)
+            raw_pos = nx.spring_layout(nx_graph, k=2.2, seed=42, iterations=55)
             for key, (x, y) in raw_pos.items():
-                positions[key] = (float(x) * 420 + 400, float(y) * 320 + 280)
+                positions[key] = (float(x) * 520 + 480, float(y) * 400 + 320)
         except Exception:
             for i, key in enumerate(keep):
-                positions[key] = (80 + (i % 8) * 120, 80 + (i // 8) * 100)
+                positions[key] = (80 + (i % 8) * 140, 80 + (i // 8) * 110)
 
     nodes = []
     for key in keep:
